@@ -30,7 +30,7 @@ use transport::{
 };
 
 use constants::Constants;
-use errors::{ClientResult, Error};
+pub use errors::{ClientResult, Error};
 use models::{Request, Response, Identity};
 
 struct ClientState {
@@ -309,11 +309,10 @@ impl MaxClient {
                             };
                             
                             if let Some(sender) = waiting_sender {
-                                let log = json!({
+                                let _ = event_sender.send(json!({
                                     "type": "log",
                                     "response": &resp
-                                });
-                                let _ = event_sender.send(log);
+                                }));
                                 let _ = sender.send(Ok(resp));
                             } else {
                                 let _ = event_sender.send(json!({

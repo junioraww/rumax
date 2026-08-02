@@ -193,13 +193,13 @@ impl MaxClient {
         };
 
         let response = match client
-        .post(upload_url)
-        .header("Content-Disposition", format!("attachment; filename={}", file_name))
-        .header("Content-Length", file_size)
-        .header("Content-Range", format!("0-{}/{}", file_size - 1, file_size))
-        .body(body)
-        .send()
-        .await
+            .post(upload_url)
+            .header("Content-Disposition", format!("attachment; filename={}", file_name))
+            .header("Content-Length", file_size)
+            .header("Content-Range", format!("0-{}/{}", file_size - 1, file_size))
+            .body(body)
+            .send()
+            .await
         {
             Ok(r) => r,
             Err(e) => return json!({ "error": format!("Upload failed: {}", e) }),

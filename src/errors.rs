@@ -1,5 +1,7 @@
+use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::sync::oneshot;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
@@ -15,6 +17,32 @@ pub enum Error {
     TauriError(String),
     Other(String),
 }
+
+impl Error {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NotConnected => "NotConnected",
+            Self::ConnectionFailed(_) => "ConnectionFailed",
+            Self::ConnectionClosed(_) => "ConnectionClosed",
+            Self::SendFailed(_) => "SendFailed",
+            Self::ParseError(_) => "ParseError",
+            Self::RequestTimeout(_) => "RequestTimeout",
+            Self::ApiResponse(_) => "ApiResponse",
+            Self::OneshotRecvError(_) => "OneshotRecvError",
+            Self::IoError(_) => "IoError",
+            Self::TauriError(_) => "TauriError",
+            Self::Other(_) => "Other",
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "type": self.kind(),
+            "text": self.to_string()
+        })
+    }
+}
+
 
 impl From<String> for Error {
     fn from(s: String) -> Self {
@@ -34,23 +62,24 @@ impl From<oneshot::error::RecvError> for Error {
     }
 }
 
-use std::fmt;
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::NotConnected => write!(f, "Клиент не подключен"),
-            Error::ConnectionFailed(e) => write!(f, "Ошибка подключения: {}", e),
-            Error::ConnectionClosed(e) => write!(f, "Соединение оборвано: {}", e),
-            Error::SendFailed(e) => write!(f, "Ошибка отправки: {}", e),
-            Error::ParseError(e) => write!(f, "Ошибка парсинга JSON: {}", e),
-            Error::RequestTimeout(d) => write!(f, "Таймаут запроса: {:?}", d),
-            Error::ApiResponse(json) => write!(f, "Ошибка API: {}", json),
-            Error::OneshotRecvError(e) => write!(f, "Ошибка получения ответа: {}", e),
-            Error::IoError(e) => write!(f, "Ошибка I/O: {}", e),
-            Error::TauriError(e) => write!(f, "Ошибка Tauri: {}", e),
-            Error::Other(s) => write!(f, "Неизвестная ошибка: {}", s),
+            Error::NotConnected => f.write_str("Not connected"),
+            Error::ConnectionFailed(e) => f.write_str(e),
+            Error::ConnectionClosed(e) => f.write_str(e),
+            Error::SendFailed(e) => f.write_str(e),
+            Error::ParseError(e) => e.fmt(f),
+            Error::RequestTimeout(d) => write!(f, "{d:?}"),
+            Error::ApiResponse(json) => write!(f, "{json}"),
+            Error::OneshotRecvError(e) => e.fmt(f),
+            Error::IoError(e) => e.fmt(f),
+            Error::TauriError(e) => f.write_str(e),
+            Error::Other(e) => f.write_str(e),
         }
     }
 }
+
+impl std::error::Error for Error {}
 
 pub type ClientResult<T> = Result<T, Error>;
