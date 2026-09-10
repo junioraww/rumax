@@ -48,6 +48,8 @@ struct ClientState {
     is_closed: bool,
     mobile_port: u16,
     mobile_host: String,
+    use_custom_ca: bool,
+    custom_ca_path: Option<String>,
 }
 
 pub enum ClientMode {
@@ -81,6 +83,8 @@ impl MaxClient {
                 is_closed: true,
                 mobile_host: Constants::MOBILE_HOST.to_string(),
                 mobile_port: Constants::MOBILE_PORT,
+                use_custom_ca: true,
+                custom_ca_path: None,
             })),
             event_tx,
         }
@@ -102,10 +106,24 @@ impl MaxClient {
         self.state.lock().await.token.clone()
     }
 
+    /*
+     * TODO move to other place
+     */
+
     pub async fn set_host(&self, address: String, port: u16) {
         let mut state = self.state.lock().await;
         state.mobile_host = address;
         state.mobile_port = port;
+    }
+
+    pub async fn set_custom_ca(&self, enabled: bool, custom_path: Option<String>) {
+        let mut state = self.state.lock().await;
+        state.use_custom_ca = enabled;
+        state.custom_ca_path = custom_path;
+    }
+
+    pub async fn enable_custom_ca(&self, enabled: bool) {
+        self.state.lock().await.use_custom_ca = enabled;
     }
     
     pub async fn connect(&self, identity: Identity, is_mobile: bool) -> ClientResult<Response> {
@@ -118,7 +136,14 @@ impl MaxClient {
 
         let (writer, reader): (Box<dyn TransportWriter>, Box<dyn TransportReader>) = if is_mobile {
             info!("Подключение Mobile TCP/TLS...");
-            let transport = MobileTransport::connect_tls(&state_lock.mobile_host, state_lock.mobile_port, None, None).await?;
+
+            let transport = MobileTransport::connect_tls(
+                &state_lock.mobile_host,
+                state_lock.mobile_port,
+                state_lock.use_custom_ca,
+                state_lock.custom_ca_path.as_deref()
+            ).await?;
+
             let (w, r) = transport.split();
             (Box::new(w), Box::new(r))
         } else {

@@ -3,7 +3,7 @@ use std::time::Duration;
 pub struct Constants;
 impl Constants {
     pub const WEBSOCKET_URI: &'static str = "wss://ws-api.oneme.ru/websocket";
-    pub const MOBILE_HOST: &'static str = "api.oneme.ru";
+    pub const MOBILE_HOST: &'static str = "api2.oneme.ru";
     pub const MOBILE_PORT: u16 = 443;
     pub const ORIGIN_HEADER: &'static str = "https://web.max.ru";
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(10000);
