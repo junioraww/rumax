@@ -116,20 +116,23 @@ pub struct MobileTransport {
     stream: MobileStream,
 }
 
+const DEFAULT_ROOT_CA: &[u8] = include_bytes!("../../assets/rootca_ssl_rsa2022.crt");
+
 impl MobileTransport {
-    pub async fn connect_tls(host: &str, port: u16, cert_path: Option<&str>, key_path: Option<&str>) -> ClientResult<Self> {
+    pub async fn connect_tls(
+        host: &str,
+        port: u16,
+        use_custom_ca: bool,
+        custom_cert_path: Option<&str>
+    ) -> ClientResult<Self> {
         let addr = format!("{}:{}", host, port);
         let tcp = TcpStream::connect(&addr).await
             .map_err(|e| Error::ConnectionFailed(format!("TCP Error: {}", e)))?;
 
-        let config = if let (Some(path_1), Some(path_2)) = (cert_path, key_path) {
-            trust_certificate(path_1, path_2)
-            .map_err(|e| Error::ConnectionFailed(format!("Cert load error: {}", e)))?
-        } else {
-            Arc::new(create_tls_config())
-        };
+        let config = create_tls_config(use_custom_ca, custom_cert_path)
+            .map_err(|e| Error::ConnectionFailed(format!("TLS config error: {}", e)))?;
 
-        let connector = TlsConnector::from(config);
+        let connector = TlsConnector::from(Arc::new(config));
         let domain = ServerName::try_from(host.to_string())
             .map_err(|_| Error::ConnectionFailed("Invalid DNS name".into()))?;
 
@@ -163,20 +166,33 @@ fn trust_certificate(
     Ok(Arc::new(config))
 }
 
-fn create_tls_config() -> ClientConfig {
-    let mut root_store = rustls::RootCertStore::empty();
-    
-    root_store.extend(
-        webpki_roots::TLS_SERVER_ROOTS
-            .iter()
-            .cloned()
-    );
-    
+fn create_tls_config(use_custom_ca: bool, cert_path: Option<&str>) -> Result<ClientConfig, String> {
+    let mut root_store = RootCertStore::empty();
+
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    if use_custom_ca {
+        let certs: Vec<CertificateDer> = if let Some(path) = cert_path {
+            CertificateDer::pem_file_iter(path)
+                .map_err(|e| format!("Не удалось открыть файл {}: {}", path, e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Ошибка парсинга PEM файла: {}", e))?
+        } else {
+            rustls_pki_types::CertificateDer::pem_slice_iter(DEFAULT_ROOT_CA)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("Ошибка парсинга встроенного PEM: {}", e))?
+        };
+
+        for cert in certs {
+            root_store.add(cert).map_err(|e| format!("Ошибка добавления CA: {}", e))?;
+        }
+    }
+
     let config = ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    config
+    Ok(config)
 }
 
 impl TransportFactory for MobileTransport {
