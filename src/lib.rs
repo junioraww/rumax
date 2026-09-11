@@ -18,6 +18,7 @@ pub mod constants;
 pub mod errors;
 pub mod models;
 pub mod navigation;
+pub mod fingerprint;
 
 pub mod transport;
 
@@ -29,6 +30,7 @@ use transport::{
     mobile::MobileTransport
 };
 
+use fingerprint::{VersionDataProvider};
 use constants::Constants;
 pub use errors::{ClientResult, Error};
 use models::{Request, Response, Identity};
@@ -50,6 +52,8 @@ struct ClientState {
     mobile_host: String,
     use_custom_ca: bool,
     custom_ca_path: Option<String>,
+    calls_seed: Option<i64>,
+    version_provider: VersionDataProvider,
 }
 
 pub enum ClientMode {
@@ -85,6 +89,8 @@ impl MaxClient {
                 mobile_port: Constants::MOBILE_PORT,
                 use_custom_ca: true,
                 custom_ca_path: None,
+                calls_seed: None,
+                version_provider: VersionDataProvider::new(),
             })),
             event_tx,
         }
@@ -176,11 +182,11 @@ impl MaxClient {
         state_lock.session_id = Utc::now().timestamp_millis();
 
         tokio::spawn(Self::read_task(reader, pending_clone, event_tx, shutdown_rx_read, Arc::clone(&self.state)));
-        debug!("Задача чтения (read_task) запущена.");
+        debug!("Задача read_task запущена.");
         
         let ping_client = self.clone();
         tokio::spawn(Self::ping_task(ping_client, shutdown_rx_ping));
-        debug!("Задача пинга (ping_task) запущена.");
+        debug!("Задача ping_task запущена.");
         
         state_lock.writer = Some(writer);
         state_lock.shutdown_tx = Some(shutdown_tx);
@@ -203,7 +209,23 @@ impl MaxClient {
             })
         };
 
-        self.send_and_wait(6, handshake_payload, 0).await
+        let handshake_response = self.send_and_wait(6, handshake_payload, 0).await?;
+
+        /*
+         if let Some(seed) = handshake_response.payload.get("callsSeed").and_then(|v| v.as_i64()) {
+            debug!("Получен calls_seed: {}", seed);
+            self.state.lock().await.calls_seed = Some(seed);
+         }
+         */
+
+        if let Some(seed_str) = handshake_response.payload.get("callsSeed").and_then(|v| v.as_str()) {
+            if let Ok(seed) = seed_str.parse::<i64>() {
+                debug!("Получен calls_seed (parsed from string): {}", seed);
+                self.state.lock().await.calls_seed = Some(seed);
+            }
+        }
+
+        Ok(handshake_response)
     }
     
     pub async fn disconnect(&self) {
@@ -260,7 +282,7 @@ impl MaxClient {
             }
         })
     }
-    
+
     pub async fn send_and_wait(
         &self,
         opcode: u16,
@@ -275,7 +297,7 @@ impl MaxClient {
             let current_seq = state.seq;
             
             state.pending.lock().unwrap().insert(current_seq, tx);
-            
+
             Request {
                 ver: 10,
                 cmd,

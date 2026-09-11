@@ -209,10 +209,59 @@ pub struct MobileWriter {
     writer: tokio::io::WriteHalf<MobileStream>,
 }
 
+fn json_to_msgpack(val: &JsonValue) -> MsgPackValue {
+    match val {
+        JsonValue::Null => MsgPackValue::Nil,
+        JsonValue::Bool(b) => MsgPackValue::Boolean(*b),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                MsgPackValue::Integer(i.into())
+            } else if let Some(u) = n.as_u64() {
+                MsgPackValue::Integer(u.into())
+            } else if let Some(f) = n.as_f64() {
+                MsgPackValue::F64(f)
+            } else {
+                MsgPackValue::Nil
+            }
+        }
+        JsonValue::String(s) => MsgPackValue::String(s.as_str().into()),
+        JsonValue::Array(arr) => {
+            MsgPackValue::Array(arr.iter().map(json_to_msgpack).collect())
+        }
+        JsonValue::Object(obj) => {
+            let mut map = Vec::new();
+            for (k, v) in obj {
+                if k == "mode" && v.is_array() {
+                    let arr = v.as_array().unwrap();
+                    let bytes: Vec<u8> = arr
+                    .iter()
+                    .filter_map(|x| x.as_u64().map(|n| n as u8))
+                    .collect();
+
+                    map.push((
+                        MsgPackValue::String(k.as_str().into()),
+                              MsgPackValue::Binary(bytes),
+                    ));
+                    continue;
+                }
+
+                map.push((
+                    MsgPackValue::String(k.as_str().into()),
+                          json_to_msgpack(v),
+                ));
+            }
+            MsgPackValue::Map(map)
+        }
+    }
+}
+
 #[async_trait]
 impl TransportWriter for MobileWriter {
     async fn send(&mut self, request: Request) -> ClientResult<()> {
-        let payload_bytes = rmp_serde::to_vec_named(&request.payload)
+        let mp_payload = json_to_msgpack(&request.payload);
+
+        let mut payload_bytes = Vec::new();
+            rmpv::encode::write_value(&mut payload_bytes, &mp_payload)
             .map_err(|e| Error::SendFailed(format!("MsgPack encode error: {}", e)))?;
 
         let payload_len = payload_bytes.len();

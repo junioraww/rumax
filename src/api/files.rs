@@ -5,9 +5,8 @@ use tokio::{fs::File};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 use reqwest::{Client, Body, multipart};
-use futures_util::StreamExt;
+//use futures_util::StreamExt;
 use std::time::Duration;
-use std::fs;
 
 const CHUNK_SIZE: usize = 6 * 1024 * 1024;
 
@@ -172,7 +171,7 @@ impl MaxClient {
         &self,
         upload_url: String,
         file_id: u64,
-        mut file: File,
+        file: File,
         file_name: String,
     ) -> Value {
         let file_size = match file.metadata().await {
