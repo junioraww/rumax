@@ -2,8 +2,44 @@ use crate::{errors::{ClientResult, Error}, MaxClient};
 use crate::models::{Response};
 use crate::fingerprint::FingerprintGenerator;
 use log::{debug, error, info, warn};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncState {
+    pub chats_sync: i64,
+    pub contacts_sync: i64,
+    pub drafts_sync: i64,
+    pub presence_sync: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_hash: Option<serde_json::Value>,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self {
+            chats_sync: -1,
+            contacts_sync: -1,
+            drafts_sync: -1,
+            presence_sync: -1,
+            config_hash: None,
+        }
+    }
+}
+
+/// Флаги для необходимости вызова Login2
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Login2Flags {
+    #[serde(default)]
+    pub config_enabled: bool,
+    #[serde(default)]
+    pub contact_enabled: bool,
+    #[serde(default)]
+    pub profile_enabled: bool,
+}
 
 impl MaxClient {
     /**
@@ -189,18 +225,118 @@ impl MaxClient {
     
     /**
      * Перезаход в мессенджер
+     * TODO стоит переименовать методы как в pymax (sync -> login, start_auth -> start?)
      */
-    pub async fn sync(&self) -> ClientResult<Response> {
-        let state = self.state.lock().await;
-        let token = state.token.as_ref().ok_or("No token set".to_string())?;
-        
-        let payload = json!({
-            "interactive": true, "token": token,
-            "chatsSync": 0, "contactsSync": 0, "presenceSync": 0, "draftsSync": 0, "chatsCount": 40,
+    pub async fn sync(
+        &self,
+        sync_state: Option<SyncState>,
+    ) -> ClientResult<(Response, Option<Response>, SyncState)> {
+        const DEFAULT_CONFIG_HASH: &str = "00000000-0000000000000000-00000000-0000000000000000-0000000000000000-0-0000000000000000-00000000";
+
+        let mut sync_state = sync_state.unwrap_or_default();
+
+        let (token, identity, calls_seed, version_provider) = {
+            let state = self.state.lock().await;
+            (
+                state.token.clone().ok_or_else(|| Error::ConnectionFailed("No token set".into()))?,
+             state.identity.clone().ok_or_else(|| Error::ConnectionFailed("No identity set".into()))?,
+             state.calls_seed,
+             state.version_provider.clone(),
+            )
+        };
+
+        let is_web = identity.user_agent.device_type.eq_ignore_ascii_case("web");
+        let chat_cache_fingerprint = if !is_web {
+            let seed = calls_seed.ok_or_else(|| {
+                Error::ConnectionFailed("handshake_response.calls_seed is missing".into())
+            })?;
+
+            let app_ver = if identity.user_agent.app_version.is_empty() {
+                "2.25.0"
+            } else {
+                &identity.user_agent.app_version
+            };
+
+            let version_data = version_provider.get_version(app_ver).await.ok_or_else(|| {
+                Error::ConnectionFailed(format!("Версия {} не найдена", app_ver))
+            })?;
+
+            let arch = identity.user_agent.arch.as_deref().unwrap_or("arm64-v8a");
+
+            FingerprintGenerator::new(version_data)
+            .generate_fingerprint(&identity.device_id, seed, Some(arch))
+        } else {
+            None
+        };
+
+        let mut payload = json!({
+            "userAgent": identity.user_agent,
+            "interactive": true,
+            "token": token,
+            "chatsSync": sync_state.chats_sync,
+            "contactsSync": sync_state.contacts_sync,
+            "presenceSync": sync_state.presence_sync,
+            "draftsSync": sync_state.drafts_sync,
+            "exp": {
+                "chatsCountGroups": vec![0x0a, 0x32]
+            }
         });
 
-        drop(state);
-        
-        self.send_and_wait(19, payload, 0).await
+        if let Some(fp) = chat_cache_fingerprint {
+            payload["chatCacheFingerprint"] = json!(fp);
+        }
+
+        if let Some(hash) = &sync_state.config_hash {
+            payload["configHash"] = hash.clone();
+        } else {
+            payload["configHash"] = json!(DEFAULT_CONFIG_HASH);
+        }
+
+        let login_response = self.send_and_wait(19, payload, 0).await?;
+
+        if let Some(new_token) = login_response.payload.get("token").and_then(|t| t.as_str()) {
+            if new_token != token {
+                self.set_token(new_token.to_string()).await;
+            }
+        }
+
+        if let Some(time) = login_response.payload.get("time").and_then(|t| t.as_i64()) {
+            sync_state.chats_sync = time;
+            sync_state.contacts_sync = time;
+            sync_state.drafts_sync = time;
+            sync_state.presence_sync = time;
+        }
+
+        if let Some(config) = login_response.payload.get("config") {
+            if let Some(hash) = config.get("hash") {
+                sync_state.config_hash = Some(hash.clone());
+            }
+        }
+
+        let mut login2_response_opt = None;
+
+        if let Some(flags_val) = login_response.payload.get("login2Flags") {
+            let flags: Login2Flags = serde_json::from_value(flags_val.clone()).unwrap_or_default();
+
+            if flags.config_enabled || flags.contact_enabled || flags.profile_enabled {
+                let login2_payload = json!({
+                    "needProfile": flags.profile_enabled,
+                    "contactsSync": if flags.contact_enabled { sync_state.contacts_sync } else { -1 },
+                    "configHash": sync_state.config_hash,
+                });
+
+                let login2_response = self.send_and_wait(8, login2_payload, 0).await?;
+
+                if let Some(config) = login2_response.payload.get("config") {
+                    if let Some(hash) = config.get("hash") {
+                        sync_state.config_hash = Some(hash.clone());
+                    }
+                }
+
+                login2_response_opt = Some(login2_response);
+            }
+        }
+
+        Ok((login_response, login2_response_opt, sync_state))
     }
 }

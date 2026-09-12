@@ -35,6 +35,8 @@ use constants::Constants;
 pub use errors::{ClientResult, Error};
 use models::{Request, Response, Identity};
 
+pub use api::auth::SyncState;
+
 struct ClientState {
     writer: Option<Box<dyn TransportWriter>>,
     seq: u64,
@@ -312,7 +314,7 @@ impl MaxClient {
             "type": "log",
             "request": request
         })); 
-        
+
         self.send_frame(request.clone()).await?;
         
         match timeout(Constants::DEFAULT_TIMEOUT, rx).await {

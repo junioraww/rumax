@@ -10,7 +10,7 @@ use tokio_rustls::{client::TlsStream, TlsConnector};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::{sync::Arc};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::pki_types::pem::PemObject;
 use rustls::{ClientConfig, RootCertStore};
 
@@ -143,7 +143,7 @@ impl MobileTransport {
     }
 }
 
-fn trust_certificate(
+/*fn trust_certificate(
     certs_file: &str,
     key_file: &str
 ) -> Result<Arc<ClientConfig>, String> {
@@ -164,7 +164,7 @@ fn trust_certificate(
         .unwrap();
 
     Ok(Arc::new(config))
-}
+}*/
 
 fn create_tls_config(use_custom_ca: bool, cert_path: Option<&str>) -> Result<ClientConfig, String> {
     let mut root_store = RootCertStore::empty();
@@ -231,16 +231,17 @@ fn json_to_msgpack(val: &JsonValue) -> MsgPackValue {
         JsonValue::Object(obj) => {
             let mut map = Vec::new();
             for (k, v) in obj {
-                if k == "mode" && v.is_array() {
+                // TODO this sucks
+                if (k == "mode" || k == "chatCacheFingerprint" || k == "chatsCountGroups") && v.is_array() {
                     let arr = v.as_array().unwrap();
                     let bytes: Vec<u8> = arr
-                    .iter()
-                    .filter_map(|x| x.as_u64().map(|n| n as u8))
-                    .collect();
+                        .iter()
+                        .filter_map(|x| x.as_u64().map(|n| n as u8))
+                        .collect();
 
                     map.push((
                         MsgPackValue::String(k.as_str().into()),
-                              MsgPackValue::Binary(bytes),
+                        MsgPackValue::Binary(bytes),
                     ));
                     continue;
                 }
