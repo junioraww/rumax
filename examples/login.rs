@@ -1,4 +1,4 @@
-use rumax::{MaxClient, models::{Identity, UserAgent}};
+use rumax::{MaxClient, SyncState, models::{Identity}};
 use std::io::{self, Write};
 use std::fs;
 use log::{info, error, debug};
@@ -71,14 +71,43 @@ async fn main() {
         Ok(resp) => {
             debug!("{:?}", resp.payload);
 
-            resp.payload.get("tokenAttrs")
-            .and_then(|t| t.get("LOGIN"))
-            .and_then(|l| l.get("token"))
-            .and_then(|t| t.as_str())
-            .map(|t| t.to_string())
-            .unwrap_or_else(|| {
-                std::process::exit(1);
-            });
+            if let Some(challenge) = resp.payload.get("passwordChallenge") {
+                let track_id = challenge.get("trackId").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                let hint = challenge.get("hint").and_then(|t| t.as_str()).unwrap_or("нет подсказки");
+
+                println!("\nТребуется облачный пароль (Подсказка: {})", hint);
+                let password = read_line("Пароль: ");
+
+                match client.check_password(password, track_id).await {
+                    Ok(pass_resp) => {
+                        debug!("{:?}", pass_resp.payload);
+
+                        let success = pass_resp.payload.get("tokenAttrs")
+                            .and_then(|t| t.get("LOGIN"))
+                            .and_then(|l| l.get("token"))
+                            .is_some();
+
+                        if !success {
+                            error!("Неверный облачный пароль или не удалось получить токен!");
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Ошибка отправки облачного пароля: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                let success = resp.payload.get("tokenAttrs")
+                    .and_then(|t| t.get("LOGIN"))
+                    .and_then(|l| l.get("token"))
+                    .is_some();
+
+                if !success {
+                    error!("Токен LOGIN не получен!");
+                    std::process::exit(1);
+                }
+            }
         }
         Err(e) => {
             error!("{}", e);
@@ -86,17 +115,29 @@ async fn main() {
         }
     }
 
-    match client.sync().await {
-        Ok(sync_resp) => {
-            let user_id = sync_resp.payload
-            .get("profile")
-            .and_then(|s| s.get("contact"))
-            .and_then(|s| s.get("id"))
-            .and_then(|id| id.as_u64());
+    let initial_sync_state = SyncState::default();
+
+    match client.sync(Some(initial_sync_state)).await {
+        Ok((sync_resp, sync2_opt, _new_sync_state)) => {
+            let profile_json = sync2_opt
+                .as_ref()
+                .and_then(|r| r.payload.get("profile"))
+                .or_else(|| sync_resp.payload.get("profile"));
+
+            let user_id = profile_json
+                .and_then(|s| s.get("contact"))
+                .and_then(|s| s.get("id"))
+                .and_then(|id| id.as_u64());
 
             if let Some(id) = user_id {
                 client.set_user_id(id).await;
                 client.spawn_telemetry_task().await;
+                info!("Успешный вход! User ID: {}", id);
+
+                // в полноценном приложении тут стоит сохранить _new_sync_state в JSON-файл
+                // чтобы при следующем запуске скормить его в sync() вместо SyncState::default()
+            } else {
+                error!("Не удалось найти профиль пользователя в ответе sync");
             }
         }
         Err(e) => {

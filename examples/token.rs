@@ -1,9 +1,12 @@
-use rumax::{MaxClient, models::Response};
+use rumax::{MaxClient, SyncState, models::{Identity, Response}};
+use serde_json::Value;
 use std::io::{self, Write};
 use std::fs;
 use std::sync::Arc;
-use uuid::Uuid;
-use log::{info, error, debug, warn};
+use log::{info, error, warn};
+
+mod identity;
+use identity::generate_device;
 
 const DEVICE_ID_FILE: &str = ".device.id";
 const TOKEN_FILE: &str = ".session.token";
@@ -16,40 +19,94 @@ fn read_line(prompt: &str) -> String {
     input.trim().to_string()
 }
 
-fn read_tokens() -> Option<(String, String)> {
+fn extract_keys_structure(val: &Value) -> Value {
+    match val {
+        Value::Object(map) => {
+            let filtered: serde_json::Map<String, Value> = map
+            .iter()
+            .map(|(k, v)| (k.clone(), extract_keys_structure(v)))
+            .collect();
+            Value::Object(filtered)
+        }
+        Value::Array(arr) => {
+            if arr.is_empty() {
+                Value::String("[empty array]".to_string())
+            } else {
+                let elem_keys = extract_keys_structure(&arr[0]);
+                Value::Array(vec![elem_keys])
+            }
+        }
+        _ => Value::Null,
+    }
+}
+
+fn print_keys_tree(val: &Value, indent: usize) {
+    let spaces = "  ".repeat(indent);
+    match val {
+        Value::Object(map) => {
+            for (k, v) in map {
+                match v {
+                    Value::Object(_) => {
+                        println!("{}{}:", spaces, k);
+                        print_keys_tree(v, indent + 1);
+                    }
+                    Value::Array(arr) => {
+                        let len = arr.len();
+                        if len == 0 {
+                            println!("{}{} [len: 0]", spaces, k);
+                        } else {
+                            // Проверяем тип первого элемента: если объект, выводим его структуру
+                            match &arr[0] {
+                                Value::Object(_) | Value::Array(_) => {
+                                    println!("{}{} [len: {}]:", spaces, k, len);
+                                    print_keys_tree(&arr[0], indent + 1);
+                                }
+                                _ => {
+                                    println!("{}{} [primitives, len: {}]", spaces, k, len);
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        println!("{}{}", spaces, k);
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => {
+            let len = arr.len();
+            if let Some(first) = arr.first() {
+                println!("{}[item schema, len: {}]:", spaces, len);
+                print_keys_tree(first, indent + 1);
+            } else {
+                println!("{}[empty array]", spaces);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn log_response(label: &str, resp: &Response) {
+    info!("[{}] Структура ключей:", label);
+    print_keys_tree(&resp.payload, 1);
+}
+
+fn get_device() -> Identity {
     if let Ok(content) = fs::read_to_string(DEVICE_ID_FILE) {
-        let mut lines = content.lines().map(str::trim).filter(|l| !l.is_empty());
-        if let (Some(first), Some(second)) = (lines.next(), lines.next()) {
-            return Some((first.to_string(), second.to_string()));
+        if let Ok(identity) = serde_json::from_str::<Identity>(&content) {
+            info!("Используем существующие identity из файла {}", DEVICE_ID_FILE);
+            return identity;
         }
     }
-    None
-}
 
-fn write_tokens(id1: &str, id2: &str) {
-    let content = format!("{}\n{}", id1, id2);
-    fs::write(DEVICE_ID_FILE, content)
-        .expect("Не удалось записать .device.id");
-}
+    info!("Создаем новую identity устройства...");
+    let identity = generate_device();
 
-fn get_device() -> (String, String) {
-    match read_tokens() {
-        Some((id1, id2)) => {
-            info!("Используем существующие device_id из файла {}", DEVICE_ID_FILE);
-            (id1, id2)
-        }
-        None => {
-            info!("Создаем новые device_id...");
+    let content = serde_json::to_string(&identity).unwrap();
+    fs::write(DEVICE_ID_FILE, content).expect("Не удалось записать .device.id");
 
-            let id1 = Uuid::new_v4().to_string().replace("-", "");
-            let id2 = Uuid::new_v4().to_string();
-
-            write_tokens(&id1, &id2);
-
-            info!("Новые device_id сохранены в {}", DEVICE_ID_FILE);
-            (id1, id2)
-        }
-    }
+    info!("Новая identity сохранена в {}", DEVICE_ID_FILE);
+    identity
 }
 
 fn load_token() -> Option<String> {
@@ -79,17 +136,25 @@ fn delete_token() {
     }
 }
 
-async fn set_user_id_and_spawn_telemetry(client: &MaxClient, sync_resp: &Response) {
-    let user_id = sync_resp.payload
-        .get("profile")
-        .and_then(|s| s.get("contact"))
-        .and_then(|s| s.get("id"))
-        .and_then(|id| id.as_u64());
-    
+async fn set_user_id_and_spawn_telemetry(
+    client: &MaxClient,
+    sync_resp: &Response,
+    sync2_opt: &Option<Response>,
+) {
+    let profile_json = sync2_opt
+    .as_ref()
+    .and_then(|r| r.payload.get("profile"))
+    .or_else(|| sync_resp.payload.get("profile"));
+
+    let user_id = profile_json
+    .and_then(|s| s.get("contact"))
+    .and_then(|s| s.get("id"))
+    .and_then(|id| id.as_u64());
+
     if let Some(id) = user_id {
         info!("Установка user_id: {}", id);
         client.set_user_id(id).await;
-        
+
         info!("Запуск фоновой задачи телеметрии...");
         client.spawn_telemetry_task().await;
     } else {
@@ -97,21 +162,20 @@ async fn set_user_id_and_spawn_telemetry(client: &MaxClient, sync_resp: &Respons
     }
 }
 
-
 #[tokio::main]
 async fn main() -> Result<(), rumax::errors::Error> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,max_client_lib=debug")
     ).init();
-    
+
     let client = Arc::new(MaxClient::new());
-    let (device_id, mt) = get_device();
-    
+    let identity = get_device();
+
     info!("Подключение к MobileSocket...");
-    match client.connect(device_id, mt, true).await {
+    match client.connect(identity, true).await {
         Ok(resp) => {
             info!("Handshake успешен!");
-            debug!("Ответ Handshake: {:?}", resp.payload);
+            log_response("Handshake", &resp);
         }
         Err(e) => {
             error!("Ошибка подключения: {}", e);
@@ -121,13 +185,18 @@ async fn main() -> Result<(), rumax::errors::Error> {
 
     if let Some(token) = load_token() {
         info!("Попытка входа по сохраненному токену...");
-        
         client.set_token(token).await;
 
-        match client.sync().await {
-            Ok(sync_resp) => {
+        let initial_sync_state = SyncState::default();
+        match client.sync(Some(initial_sync_state)).await {
+            Ok((sync_resp, sync2_opt, _new_sync_state)) => {
                 info!("Вход по токену успешен!");
-                set_user_id_and_spawn_telemetry(&client, &sync_resp).await;
+                log_response("Sync 1", &sync_resp);
+                if let Some(ref sync2) = sync2_opt {
+                    log_response("Sync 2 (Profile)", sync2);
+                }
+
+                set_user_id_and_spawn_telemetry(&client, &sync_resp, &sync2_opt).await;
             }
             Err(e) => {
                 warn!("Ошибка входа по токену (возможно, истек): {}. Удаляем токен", e);
@@ -138,30 +207,67 @@ async fn main() -> Result<(), rumax::errors::Error> {
         }
     } else {
         info!("Токен не найден, запуск входа по номеру телефона...");
-        
+
         let phone = read_line("Введите номер телефона (+7...): ");
-        if let Err(e) = client.start_auth(phone).await {
-            error!("Ошибка запроса кода: {}", e);
-            return Err(e.into());
+        match client.start_auth(phone).await {
+            Ok(resp) => {
+                log_response("Start Auth", &resp);
+            }
+            Err(e) => {
+                error!("Ошибка запроса кода: {}", e);
+                return Err(e.into());
+            }
         }
-        
+
         let code = read_line("Введите код из СМС/звонка: ");
-        if let Err(e) = client.check_code(code).await {
-            error!("Ошибка проверки кода: {}", e);
-            return Err(e.into());
+        let resp = match client.check_code(code).await {
+            Ok(resp) => {
+                log_response("Check Code", &resp);
+                resp
+            }
+            Err(e) => {
+                error!("Ошибка проверки кода: {}", e);
+                return Err(e.into());
+            }
+        };
+
+        if let Some(challenge) = resp.payload.get("passwordChallenge") {
+            let track_id = challenge.get("trackId").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            let hint = challenge.get("hint").and_then(|t| t.as_str()).unwrap_or("нет подсказки");
+
+            println!("\nТребуется облачный пароль (Подсказка: {})", hint);
+            let password = read_line("Пароль: ");
+
+            let pass_resp = client.check_password(password, track_id).await?;
+            log_response("Check Password", &pass_resp);
+
+            let success = pass_resp.payload.get("tokenAttrs")
+            .and_then(|t| t.get("LOGIN"))
+            .and_then(|l| l.get("token"))
+            .is_some();
+
+            if !success {
+                error!("Неверный облачный пароль или не удалось получить токен!");
+                return Ok(());
+            }
         }
-        
-        match client.sync().await {
-            Ok(sync_resp) => {
+
+        let initial_sync_state = SyncState::default();
+        match client.sync(Some(initial_sync_state)).await {
+            Ok((sync_resp, sync2_opt, _new_sync_state)) => {
                 info!("Вход по коду и телефону успешен");
-                
+                log_response("Sync 1", &sync_resp);
+                if let Some(ref sync2) = sync2_opt {
+                    log_response("Sync 2 (Profile)", sync2);
+                }
+
                 if let Some(new_token) = client.get_token().await {
                     save_token(&new_token);
                 } else {
                     warn!("Не удалось получить токен из клиента для сохранения");
                 }
 
-                set_user_id_and_spawn_telemetry(&client, &sync_resp).await;
+                set_user_id_and_spawn_telemetry(&client, &sync_resp, &sync2_opt).await;
             }
             Err(e) => {
                 error!("Ошибка синхронизации: {}", e);
@@ -169,11 +275,10 @@ async fn main() -> Result<(), rumax::errors::Error> {
             }
         }
     }
-    
+
     info!("Успешный вход!");
-    
+
     let chat_id_str = read_line("Введите Chat ID для тестового сообщения: ");
-    
     let chat_id: i64 = match chat_id_str.parse() {
         Ok(num) => num,
         Err(_) => {
@@ -181,25 +286,24 @@ async fn main() -> Result<(), rumax::errors::Error> {
             return Ok(());
         }
     };
-    
+
     let message = read_line("Введите текст сообщения: ");
-    
     match client.send_message(chat_id, message, None).await {
         Ok(resp) => {
             info!("Сообщение успешно отправлено!");
-            info!("Ответ send_message: {:?}", resp.payload);
+            log_response("Send Message", &resp);
         }
         Err(e) => {
             error!("Ошибка отправки сообщения: {}", e);
         }
     }
-    
-    match client.fetch_history(chat_id, Option::None, 0, 200).await {
+
+    match client.fetch_history(chat_id, None).await {
         Ok(resp) => {
-            info!("Ответ fetch_history: {:?}", resp.payload);
+            log_response("Fetch History", &resp);
         }
         Err(e) => {
-            error!("Ошибка отправки сообщения: {}", e);
+            error!("Ошибка получения истории сообщений: {}", e);
         }
     }
 

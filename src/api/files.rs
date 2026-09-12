@@ -8,7 +8,7 @@ use reqwest::{Client, Body, multipart};
 //use futures_util::StreamExt;
 use std::time::Duration;
 
-const CHUNK_SIZE: usize = 6 * 1024 * 1024;
+//const CHUNK_SIZE: usize = 6 * 1024 * 1024;
 
 impl MaxClient {
     /*
