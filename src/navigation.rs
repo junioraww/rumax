@@ -1,186 +1,147 @@
-use phf::{phf_map, Map};
-use rand::seq::SliceRandom;
+use rand::distributions::{Distribution, WeightedIndex};
+use rand::Rng;
+use std::collections::VecDeque;
+use std::time::Duration;
 
-static SCREEN_ID_MAP: Map<&'static str, u32> = phf_map! {
-    "application_background" => 1,
-    "auth_sign_method" => 50,
-    "auth_phone_login" => 51,
-    "auth_otp" => 52,
-    "auth_empty_profile" => 53,
-    "auth_avatars" => 54,
-    "contacts_tab" => 100,
-    "contacts_search" => 102,
-    "contacts_search_by_phone" => 103,
-    "chats_list_tab" => 150,
-    "chats_list_search_initial" => 151,
-    "chats_list_search_result" => 152,
-    "create_chat" => 200,
-    "create_chat_members_picker" => 201,
-    "create_chat_info" => 202,
-    "avatar_picker_gallery" => 250,
-    "avatar_picker_crop" => 251,
-    "avatar_picker_camera" => 252,
-    "avatar_viewer" => 253,
-    "call_history_tab" => 300,
-    "call_new_call" => 302,
-    "call_create_group_link" => 303,
-    "call_add_participants" => 304,
-    "call" => 305,
-    "chat" => 350,
-    "chat_attach_picker" => 351,
-    "chat_attach_picker_media_viewer" => 352,
-    "chat_attach_picker_camera" => 353,
-    "chat_share_location" => 354,
-    "chat_share_contact" => 355,
-    "chat_forward" => 357,
-    "chat_media_viewer" => 358,
-    "chat_system_file_viewer" => 359,
-    "chat_location_viewer" => 360,
-    "chat_info" => 400,
-    "chat_info_all_participants" => 401,
-    "chat_info_editing" => 402,
-    "chat_info_add_participants" => 403,
-    "chat_info_administrators" => 404,
-    "chat_info_add_administrator" => 405,
-    "chat_info_blocked_participants" => 406,
-    "chat_info_change_owner" => 407,
-    "chat_attachments_media" => 408,
-    "chat_attachments_files" => 409,
-    "chat_attachments_links" => 410,
-    "chat_info_invite_link" => 411,
-    "chat_attachments_voices" => 412,
-    "settings_tab" => 450,
-    "settings_profile_editing" => 451,
-    "settings_shortname_change" => 452,
-    "settings_phone_change" => 453,
-    "settings_notifications" => 454,
-    "settings_notifications_system" => 455,
-    "settings_folders" => 456,
-    "settings_privacy" => 457,
-    "settings_privacy_block_list" => 458,
-    "settings_media" => 459,
-    "settings_messages" => 460,
-    "settings_stickers" => 461,
-    "settings_chat_decoration" => 462,
-    "settings_phone_change_phone_input" => 463,
-    "settings_phone_change_phone_otp" => 464,
-    "settings_cache" => 465,
-    "settings_profile_avatars" => 466,
-    "settings_about_application" => 467,
-    "settings_privacy_sensitive_content" => 479,
-    "miniapp" => 500,
-};
-
-static NAV_TRANSITIONS: phf::Map<&'static str, &[&'static str]> = phf_map! {
-    "chats_list_tab" => &[
-        "chat",
-        "contacts_tab",
-        "call_history_tab",
-        "settings_tab",
-        "create_chat",
-        "chat_attachments_voices",
-    ],
-    "chat" => &[
-        "chats_list_tab",
-        "chat_attachments_media",
-    ],
-    "contacts_tab" => &[
-        "call_history_tab",
-        "chats_list_tab",
-        "settings_tab",
-        "create_chat",
-    ],
-    "call_history_tab" => &[
-        "chats_list_tab",
-        "settings_tab",
-        "contacts_tab",
-    ],
-    "settings_tab" => &[
-        "settings_folders",
-        "settings_privacy",
-        "settings_notifications",
-        "settings_chat_decoration",
-        "call_history_tab",
-        "contacts_tab",
-        "chats_list_tab",
-    ],
-    "settings_folders" => &[
-        "settings_tab",
-        "chats_list_tab",
-        "contacts_tab",
-        "call_history_tab",
-    ],
-    "settings_privacy" => &[
-        "settings_tab",
-        "chats_list_tab",
-        "contacts_tab",
-        "call_history_tab",
-    ],
-    "settings_notifications" => &[
-        "settings_tab",
-        "contacts_tab",
-        "call_history_tab",
-        "chats_list_tab",
-    ],
-    "settings_chat_decoration" => &[
-        "settings_tab",
-        "chats_list_tab",
-        "contacts_tab",
-        "call_history_tab",
-    ],
-    "create_chat" => &[
-        "chats_list_tab",
-        "contacts_tab",
-    ],
-    "chat_attachments_media" => &[
-        "chat_attachments_files",
-        "chat_attachments_voices",
-        "chat_attachments_links",
-        "chat",
-    ],
-    "chat_attachments_files" => &[
-        "chat_attachments_voices",
-        "chat_attachments_media",
-        "chat_attachments_links",
-        "chat",
-    ],
-    "chat_attachments_voices" => &[
-        "chat_attachments_links",
-        "chat_attachments_media",
-        "chat_attachments_files",
-        "chat",
-    ],
-    "chat_attachments_links" => &[
-        "chat_attachments_media",
-        "chat_attachments_files",
-        "chat_attachments_voices",
-        "chat",
-    ],
-};
-
-pub fn get_screen_id(name: &str) -> u32 {
-    SCREEN_ID_MAP
-        .get(name)
-        .cloned()
-        .unwrap_or_else(|| panic!("Unknown screen name: {}", name))
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Screen {
+    Background = 1,
+    Contacts = 100,
+    Chats = 150,
+    Search = 151,
+    Calls = 300,
+    Chat = 350,
+    Settings = 450,
+    MiniApp = 500,
 }
 
-#[allow(dead_code)]
-pub fn can_navigate(from_screen: &str, to_screen: &str) -> bool {
-    if from_screen == to_screen {
-        return true;
+impl Screen {
+    pub fn id(self) -> u32 {
+        self as u32
     }
-    NAV_TRANSITIONS
-        .get(from_screen)
-        .map_or(false, |transitions| transitions.contains(&to_screen))
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Screen::Background => "BACKGROUND",
+            Screen::Contacts => "CONTACTS",
+            Screen::Chats => "CHATS",
+            Screen::Search => "SEARCH",
+            Screen::Calls => "CALLS",
+            Screen::Chat => "CHAT",
+            Screen::Settings => "SETTINGS",
+            Screen::MiniApp => "MINIAPP",
+        }
+    }
 }
 
-pub fn get_random_navigation(from_screen: &str) -> &'static str {
+#[derive(Clone, Debug)]
+pub struct RouteProfile {
+    pub steps: u32,
+    pub min_pause: f64,
+    pub max_pause: f64,
+    pub long_pause_chance: f64,
+    pub min_long_pause: f64,
+    pub max_long_pause: f64,
+    pub back_chance: f64,
+}
+
+impl RouteProfile {
+    pub fn get_pause_duration(&self) -> Duration {
+        let mut rng = rand::thread_rng();
+        let secs = if rng.gen_bool(self.long_pause_chance) {
+            rng.gen_range(self.min_long_pause..=self.max_long_pause)
+        } else {
+            rng.gen_range(self.min_pause..=self.max_pause)
+        };
+        Duration::from_secs_f64(secs)
+    }
+}
+
+pub fn get_random_profile() -> RouteProfile {
     let mut rng = rand::thread_rng();
-    
-    NAV_TRANSITIONS
-        .get(from_screen)
-        .and_then(|transitions| transitions.choose(&mut rng))
-        .cloned()
-        .unwrap_or("chats_list_tab")
+    match rng.gen_range(0..3) {
+        0 => RouteProfile { // "quick"
+            steps: 2, min_pause: 35.0, max_pause: 95.0,
+            long_pause_chance: 0.05, min_long_pause: 180.0, max_long_pause: 420.0, back_chance: 0.30,
+        },
+        1 => RouteProfile { // "browse"
+            steps: 4, min_pause: 70.0, max_pause: 210.0,
+            long_pause_chance: 0.12, min_long_pause: 240.0, max_long_pause: 720.0, back_chance: 0.22,
+        },
+        _ => RouteProfile { // "read"
+            steps: 3, min_pause: 140.0, max_pause: 360.0,
+            long_pause_chance: 0.25, min_long_pause: 420.0, max_long_pause: 1200.0, back_chance: 0.18,
+        },
+    }
+}
+
+fn get_transitions(screen: Screen) -> &'static [(Screen, u32)] {
+    match screen {
+        Screen::Background => &[(Screen::Chats, 10), (Screen::Settings, 1)],
+        Screen::Chats => &[
+            (Screen::Chat, 7), (Screen::Contacts, 2), (Screen::Search, 2),
+            (Screen::Calls, 1), (Screen::Settings, 1), (Screen::Chats, 2)
+        ],
+        Screen::Chat => &[
+            (Screen::Chats, 8), (Screen::Chat, 2), (Screen::Settings, 1)
+        ],
+        Screen::Contacts => &[
+            (Screen::Chats, 6), (Screen::Chat, 2), (Screen::Search, 1)
+        ],
+        Screen::Search => &[
+            (Screen::Chats, 5), (Screen::Chat, 3), (Screen::Contacts, 1)
+        ],
+        Screen::Calls => &[
+            (Screen::Chats, 5), (Screen::Contacts, 2), (Screen::Settings, 2)
+        ],
+        Screen::Settings => &[
+            (Screen::Chats, 7), (Screen::Contacts, 2), (Screen::Calls, 2), (Screen::MiniApp, 1)
+        ],
+        Screen::MiniApp => &[
+            (Screen::Settings, 3), (Screen::Chats, 6)
+        ],
+    }
+}
+
+pub struct NavigationPlanner {
+    pub current_screen: Screen,
+    history: VecDeque<Screen>,
+}
+
+impl NavigationPlanner {
+    pub fn new() -> Self {
+        Self {
+            current_screen: Screen::Background,
+            history: VecDeque::with_capacity(4),
+        }
+    }
+
+    pub fn reset_to_background(&mut self) {
+        self.current_screen = Screen::Background;
+        self.history.clear();
+    }
+
+    pub fn next_screen(&mut self, profile: &RouteProfile) -> Screen {
+        let mut rng = rand::thread_rng();
+
+        if !self.history.is_empty() && rng.gen_bool(profile.back_chance) {
+            self.current_screen = self.history.pop_back().unwrap();
+            return self.current_screen;
+        }
+
+        let transitions = get_transitions(self.current_screen);
+        let weights: Vec<u32> = transitions.iter().map(|&(_, w)| w).collect();
+        let dist = WeightedIndex::new(&weights).expect("Неверные веса графа переходов");
+        let next_screen = transitions[dist.sample(&mut rng)].0;
+
+        if next_screen != self.current_screen {
+            self.history.push_back(self.current_screen);
+            if self.history.len() > 4 {
+                self.history.pop_front();
+            }
+        }
+
+        self.current_screen = next_screen;
+        self.current_screen
+    }
 }

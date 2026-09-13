@@ -38,7 +38,6 @@ url = "2.5"
 log = "0.4"
 env_logger = "0.10"
 thiserror = "1.0"
-phf = { version = "0.13.1", features = ["macros"] }
 rand = { version = "0.8.5" }
 flate2 = "1.0"
 bytes = "1.11.0"
