@@ -35,6 +35,9 @@ use constants::Constants;
 pub use errors::{ClientResult, Error};
 use models::{Request, Response, Identity};
 
+pub use api::telemetry::TelemetryChat;
+use navigation::NavigationPlanner;
+
 pub use api::auth::SyncState;
 
 struct ClientState {
@@ -56,6 +59,9 @@ struct ClientState {
     custom_ca_path: Option<String>,
     calls_seed: Option<i64>,
     version_provider: VersionDataProvider,
+    // new (updated telemetry)
+    planner: NavigationPlanner,
+    telemetry_chats: Vec<TelemetryChat>,
 }
 
 pub enum ClientMode {
@@ -93,6 +99,8 @@ impl MaxClient {
                 custom_ca_path: None,
                 calls_seed: None,
                 version_provider: VersionDataProvider::new(),
+                planner: NavigationPlanner::new(),
+                telemetry_chats: Vec::new(),
             })),
             event_tx,
         }
