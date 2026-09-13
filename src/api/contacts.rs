@@ -3,6 +3,12 @@ use crate::models::Response;
 use serde_json::json;
 
 impl MaxClient {
+    pub async fn get_contacts(&self) -> ClientResult<Response> {
+        self.send_and_wait(8, json!({
+            "contactsSync": 0
+        }), 0).await
+    }
+
     pub async fn get_by_phone(
         &self,
         phone: String
