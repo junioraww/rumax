@@ -267,4 +267,23 @@ impl MaxClient {
 
         self.send_and_wait(59, payload, 0).await
     }
+
+    pub async fn set_chat_mute(
+        &self,
+        chat_id: i64,
+        dont_disturb_until: i64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "settings": {
+                "chats": {
+                    chat_id.to_string(): {
+                        "dontDisturbUntil": dont_disturb_until
+                    }
+                }
+            }
+        });
+
+        self.send_and_wait(22, payload, 0).await
+    }
 }
+
