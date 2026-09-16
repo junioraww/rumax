@@ -86,3 +86,5 @@ pub fn generate_device() -> Identity {
         },
     }
 }
+
+fn main() {}
