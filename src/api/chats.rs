@@ -285,5 +285,70 @@ impl MaxClient {
 
         self.send_and_wait(22, payload, 0).await
     }
+
+    pub async fn get_folders(
+        &self,
+        folder_sync: Option<i64>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "folderSync": folder_sync.unwrap_or(0),
+        });
+
+        self.send_and_wait(272, payload, 0).await
+    }
+
+    pub async fn get_folder_by_id(
+        &self,
+        folder_ids: Vec<String>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "folderIds": folder_ids,
+        });
+
+        self.send_and_wait(273, payload, 0).await
+    }
+
+    pub async fn update_folder(
+        &self,
+        id: String,
+        title: String,
+        include: Vec<i64>,
+        filters: Vec<i64>,
+        options: Vec<i64>,
+        favorites: Vec<i64>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "id": id,
+            "title": title.trim(),
+            "include": include,
+            "filters": filters,
+            "options": options,
+            "favorites": favorites,
+        });
+
+        self.send_and_wait(274, payload, 0).await
+    }
+
+    pub async fn reorder_folders(
+        &self,
+        folders_order: Vec<String>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "foldersOrder": folders_order,
+        });
+
+        self.send_and_wait(275, payload, 0).await
+    }
+
+    pub async fn delete_folders(
+        &self,
+        folder_ids: Vec<String>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "folderIds": folder_ids,
+        });
+
+        self.send_and_wait(276, payload, 0).await
+    }
 }
 
