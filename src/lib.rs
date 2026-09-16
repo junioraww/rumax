@@ -425,7 +425,11 @@ impl MaxClient {
                             info!("Pong получен");
                         }
                         Err(e) => {
-                            error!("Ошибка Ping: {}. Остановка ping_task", e);
+                            error!("Ping failed: {}. Stopping ping_task", e);
+                            let _ = client.event_tx.send(json!({
+                                "type": "log",
+                                "response": "closed"
+                            }));
                             break;
                         }
                     }

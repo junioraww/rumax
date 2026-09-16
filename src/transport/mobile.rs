@@ -128,6 +128,7 @@ impl MobileTransport {
         let addr = format!("{}:{}", host, port);
         let tcp = TcpStream::connect(&addr).await
             .map_err(|e| Error::ConnectionFailed(format!("TCP Error: {}", e)))?;
+        tcp.set_nodelay(true).ok();
 
         let config = create_tls_config(use_custom_ca, custom_cert_path)
             .map_err(|e| Error::ConnectionFailed(format!("TLS config error: {}", e)))?;
@@ -301,8 +302,8 @@ impl TransportReader for MobileReader {
         };
 
         let ver = header[0];
-        let cmd = u16::from_be_bytes([header[1], header[2]]);
-        let seq = header[3] as u64;
+        let cmd = header[1] as u16;
+        let seq = u16::from_be_bytes([header[2], header[3]]) as u64;
         let opcode = u16::from_be_bytes([header[4], header[5]]);
         let packed_len_raw = u32::from_be_bytes([header[6], header[7], header[8], header[9]]);
 
