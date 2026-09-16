@@ -66,3 +66,30 @@ fn test_bot_info_parsing() {
         Some("Test bot description")
     );
 }
+
+#[test]
+fn test_chat_folder_serialization() {
+    let raw = serde_json::json!({
+        "folders": [
+            {
+                "id": "synthetic-folder-id",
+                "title": "Work",
+                "include": [101, 102],
+                "filters": [2, 3],
+                "options": [0],
+                "favorites": [101]
+            }
+        ],
+        "foldersOrder": ["synthetic-folder-id"],
+        "folderSync": 12345
+    });
+
+    let payload: rumax::models::FoldersPayload = serde_json::from_value(raw).expect("deserialize");
+    assert_eq!(payload.folders.len(), 1);
+    assert_eq!(payload.folders[0].id, "synthetic-folder-id");
+    assert_eq!(payload.folders[0].title, "Work");
+    assert_eq!(payload.folders[0].include, vec![101, 102]);
+    assert_eq!(payload.folders[0].filters, vec![2, 3]);
+    assert_eq!(payload.folders_order, vec!["synthetic-folder-id"]);
+    assert_eq!(payload.folder_sync, Some(12345));
+}
