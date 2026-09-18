@@ -116,7 +116,7 @@ pub struct MobileTransport {
     stream: MobileStream,
 }
 
-const DEFAULT_ROOT_CA: &[u8] = include_bytes!("../../assets/rootca_ssl_rsa2022.crt");
+const DEFAULT_ROOT_CA: &[u8] = crate::MINTSIFRY_ROOT_CA;
 
 impl MobileTransport {
     pub async fn connect_tls(

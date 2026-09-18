@@ -40,6 +40,26 @@ use navigation::NavigationPlanner;
 
 pub use api::auth::SyncState;
 
+pub const MINTSIFRY_ROOT_CA: &[u8] = include_bytes!("../assets/rootca_ssl_rsa2022.crt");
+
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    let mut builder = reqwest::Client::builder();
+    if let Ok(cert) = reqwest::Certificate::from_pem(MINTSIFRY_ROOT_CA) {
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+}
+
+pub fn create_http_client() -> reqwest::Client {
+    http_client_builder().build().unwrap_or_else(|_| reqwest::Client::new())
+}
+
+static SHARED_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+pub fn shared_http_client() -> &'static reqwest::Client {
+    SHARED_HTTP_CLIENT.get_or_init(create_http_client)
+}
+
 struct ClientState {
     writer: Option<Box<dyn TransportWriter>>,
     seq: u64,
@@ -221,18 +241,11 @@ impl MaxClient {
 
         let handshake_response = self.send_and_wait(6, handshake_payload, 0).await?;
 
-        /*
-         if let Some(seed) = handshake_response.payload.get("callsSeed").and_then(|v| v.as_i64()) {
+        if let Some(seed) = handshake_response.payload.get("callsSeed").and_then(|v| {
+            v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        }) {
             debug!("Получен calls_seed: {}", seed);
             self.state.lock().await.calls_seed = Some(seed);
-         }
-         */
-
-        if let Some(seed_str) = handshake_response.payload.get("callsSeed").and_then(|v| v.as_str()) {
-            if let Ok(seed) = seed_str.parse::<i64>() {
-                debug!("Получен calls_seed (parsed from string): {}", seed);
-                self.state.lock().await.calls_seed = Some(seed);
-            }
         }
 
         Ok(handshake_response)
