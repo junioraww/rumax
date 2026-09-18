@@ -91,7 +91,7 @@ impl MaxClient {
             .unwrap(),
         );
 
-        let client = reqwest::Client::new();
+        let client = crate::create_http_client();
         let response = match client.post(upload_url).multipart(form).send().await {
             Ok(r) => r,
             Err(e) => return json!({ "error": format!("Upload request failed: {}", e) }),
@@ -136,7 +136,7 @@ impl MaxClient {
             return json!({ "error": "Empty file" });
         }
 
-        let client = match Client::builder()
+        let client = match crate::http_client_builder()
         .timeout(Duration::from_secs(600))
         .build()
         {
@@ -186,7 +186,7 @@ impl MaxClient {
         let stream = ReaderStream::new(file);
         let body = Body::wrap_stream(stream);
 
-        let client = match Client::builder().build() {
+        let client = match crate::http_client_builder().build() {
             Ok(c) => c,
             Err(e) => return json!({ "error": format!("Client build failed: {}", e) }),
         };
