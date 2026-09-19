@@ -2,6 +2,7 @@ use crate::{errors::ClientResult, MaxClient};
 use serde_json::{json, Map, Value};
 use crate::models::Response;
 use chrono::Utc;
+use std::collections::HashMap;
 
 impl MaxClient {
     pub async fn search_public(
@@ -280,6 +281,19 @@ impl MaxClient {
                         "dontDisturbUntil": dont_disturb_until
                     }
                 }
+            }
+        });
+
+        self.send_and_wait(22, payload, 0).await
+    }
+
+    pub async fn update_user_settings(
+        &self,
+        settings: HashMap<String, serde_json::Value>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "settings": {
+                "user": settings
             }
         });
 

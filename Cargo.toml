@@ -1,6 +1,6 @@
 [package]
 name = "rumax"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Rust client for the internal Max Messenger API"
 license = "MIT"
