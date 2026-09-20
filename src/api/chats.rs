@@ -364,5 +364,24 @@ impl MaxClient {
 
         self.send_and_wait(276, payload, 0).await
     }
+
+    pub async fn get_chat_media(
+        &self,
+        chat_id: i64,
+        message_id: i64,
+        attach_types: Vec<String>,
+        forward: i32,
+        backward: i32,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+            "messageId": message_id,
+            "attachTypes": attach_types,
+            "forward": forward,
+            "backward": backward,
+        });
+
+        self.send_and_wait(51, payload, 0).await
+    }
 }
 
