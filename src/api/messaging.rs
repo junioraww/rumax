@@ -201,12 +201,16 @@ impl MaxClient {
         chat_id: i64,
         message_id: u64,
         video_id: i64,
+        token: Option<String>,
     ) -> ClientResult<Response> {
-        let payload = json!({
+        let mut payload = json!({
             "chatId": chat_id,
             "messageId": message_id,
             "videoId": video_id
         });
+        if let Some(t) = token {
+            payload["token"] = json!(t);
+        }
         self.send_and_wait(83, payload, 0).await
     }
 
