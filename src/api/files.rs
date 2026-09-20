@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tokio::{fs::File};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
-use reqwest::{Client, Body, multipart};
+use reqwest::{Body, multipart};
 //use futures_util::StreamExt;
 use std::time::Duration;
 
@@ -48,6 +48,24 @@ impl MaxClient {
             "profile": profile,
         });
         self.send_and_wait(87, payload, 0).await
+    }
+
+    pub async fn get_audio_upload(&self, count: i64) -> ClientResult<Response> {
+        let payload = json!({
+            "uploaderType": 1,
+            "type": 2,
+            "count": count,
+        });
+        self.send_and_wait(82, payload, 0).await
+    }
+
+    pub async fn get_video_note_upload(&self, count: i64) -> ClientResult<Response> {
+        let payload = json!({
+            "uploaderType": 1,
+            "type": 1,
+            "count": count,
+        });
+        self.send_and_wait(82, payload, 0).await
     }
 
     pub async fn upload_photo(

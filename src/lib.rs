@@ -71,6 +71,7 @@ struct ClientState {
     action_id: u64,
     session_id: i64,
     identity: Option<Identity>,
+    #[allow(dead_code)]
     current_screen: String,
     is_closed: bool,
     mobile_port: u16,
@@ -407,6 +408,10 @@ impl MaxClient {
                         },
                         Err(e) => {
                             error!("Ошибка чтения транспорта:\n{}", e);
+                            let _ = event_sender.send(json!({
+                                "type": "log",
+                                "response": "closed"
+                            }));
                             let mut s = state.lock().await;
                             s.writer = None;
                             let mut pending_guard = pending.lock().unwrap();
@@ -443,6 +448,12 @@ impl MaxClient {
                                 "type": "log",
                                 "response": "closed"
                             }));
+                            let mut s = client.state.lock().await;
+                            s.writer = None;
+                            let mut pending_guard = s.pending.lock().unwrap();
+                            for (_, sender) in pending_guard.drain() {
+                                let _ = sender.send(Err(Error::ConnectionClosed(e.to_string())));
+                            }
                             break;
                         }
                     }

@@ -70,4 +70,39 @@ impl MaxClient {
         });
         self.send_and_wait(119, payload, 0).await
     }
+
+    pub async fn open_web_app(
+        &self,
+        bot_id: u64,
+        start_param: Option<String>,
+        chat_id: Option<i64>,
+    ) -> ClientResult<Response> {
+        let mut payload = json!({
+            "botId": bot_id,
+        });
+        if let Some(param) = start_param {
+            if !param.trim().is_empty() {
+                payload["startParam"] = json!(param);
+            }
+        }
+        if let Some(cid) = chat_id {
+            payload["chatId"] = json!(cid);
+        }
+        self.send_and_wait(160, payload, 0).await
+    }
+
+    pub async fn share_phone_with_bot(&self, bot_id: u64) -> ClientResult<Response> {
+        let payload = json!({
+            "botId": bot_id,
+        });
+        self.send_and_wait(106, payload, 0).await
+    }
+
+    pub async fn submit_external_callback(&self, url: String) -> ClientResult<Response> {
+        let payload = json!({
+            "url": url,
+        });
+        self.send_and_wait(105, payload, 0).await
+    }
 }
+
