@@ -1,6 +1,6 @@
 use crate::{errors::ClientResult, MaxClient};
 use crate::models::{Response, FetchHistoryOptions};
-use serde_json::{json, Map};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use chrono::Utc;
 
@@ -134,14 +134,16 @@ impl MaxClient {
         &self,
         chat_id: i64,
         message_id: u64,
-        text: String
+        text: String,
+        attaches: Option<Vec<Value>>,
+        elements: Option<Vec<Value>>,
     ) -> ClientResult<Response> {
         let payload = json!({
             "chatId": chat_id,
             "messageId": message_id,
             "text": text,
-            "elements": [],
-            "attaches": [],
+            "elements": elements.unwrap_or_default(),
+            "attaches": attaches.unwrap_or_default(),
         });
         self.send_and_wait(67, payload, 0).await
     }
