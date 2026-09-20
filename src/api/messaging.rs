@@ -2,6 +2,7 @@ use crate::{errors::ClientResult, MaxClient};
 use crate::models::{Response, FetchHistoryOptions};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::time::Duration;
 use chrono::Utc;
 
 impl MaxClient {
@@ -15,8 +16,16 @@ impl MaxClient {
 
         let mut message = Map::new();
 
-        message.insert("text".into(), json!(text));
-        message.insert("cid".into(), json!(Utc::now().timestamp_millis()));
+        if !text.is_empty() {
+            message.insert("text".into(), json!(text));
+        }
+        let cid = args_map
+            .get("cid")
+            .and_then(|c| c.as_i64())
+            .unwrap_or_else(|| -(Utc::now().timestamp_millis() as i64));
+        message.insert("cid".into(), json!(cid));
+        message.insert("isLive".into(), json!(false));
+        message.insert("detectShare".into(), json!(false));
         message.insert(
             "elements".into(),
             args_map.get("elements").cloned().unwrap_or(json!([])),
@@ -44,6 +53,22 @@ impl MaxClient {
             "message": message,
             "notify": args_map.get("notify").cloned().unwrap_or(json!(true)),
         });
+
+        for attempt in 0..60 {
+            let res = self.send_and_wait(64, payload.clone(), 0).await;
+            match res {
+                Ok(response) => return Ok(response),
+                Err(crate::errors::Error::ApiResponse(ref err_val)) => {
+                    let err_str = err_val.to_string();
+                    if (err_str.contains("not.ready") || err_str.contains("not_ready")) && attempt < 59 {
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                        continue;
+                    }
+                    return Err(crate::errors::Error::ApiResponse(err_val.clone()));
+                }
+                Err(e) => return Err(e),
+            }
+        }
 
         self.send_and_wait(64, payload, 0).await
     }
