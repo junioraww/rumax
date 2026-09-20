@@ -197,7 +197,17 @@ impl MaxClient {
         self.send_and_wait(88, payload, 0).await
     }
     
-    /* TODO Upload image, video, file */
-    
-    
+    pub async fn request_transcription(
+        &self,
+        chat_id: i64,
+        message_id: u64,
+        media_id: u64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+            "messageId": message_id,
+            "mediaId": media_id,
+        });
+        self.send_and_wait(202, payload, 0).await
+    }
 }
