@@ -142,7 +142,7 @@ impl MaxClient {
         video_id: u64,
         token: String,
         mut file: File,
-        file_name: String,
+        _file_name: String,
     ) -> Value {
         let mut file_bytes = Vec::new();
         if let Err(e) = file.read_to_end(&mut file_bytes).await {
@@ -162,11 +162,19 @@ impl MaxClient {
             Err(e) => return json!({ "error": format!("Failed to build client: {}", e) }),
         };
 
+        let effective_filename = std::path::Path::new(&_file_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.is_empty())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| format!("{}.bin", video_id));
+
         let response = match client.post(upload_url)
-        .header("Content-Disposition", format!("attachment; filename={}", file_name))
-        .header("Content-Range", format!("0-{}/{}", file_size - 1, file_size))
-        .header("Content-Length", file_size)
-        .header("Connection", "keep-alive")
+        .header("Content-Type", "application/octet-stream")
+        .header("Content-Disposition", format!("attachment; filename=\"{}\"", effective_filename))
+        .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
+        .header("Content-Length", file_size.to_string())
+        .header("Connection", "close")
         .body(file_bytes)
         .send()
         .await
@@ -177,6 +185,15 @@ impl MaxClient {
 
         if !response.status().is_success() {
             return json!({ "error": format!("Upload failed with status {}", response.status()) });
+        }
+
+        let resp_bytes = match response.bytes().await {
+            Ok(b) => b,
+            Err(e) => return json!({ "error": format!("Failed to read upload response: {}", e) }),
+        };
+        let resp_str = String::from_utf8_lossy(&resp_bytes);
+        if resp_str.contains("error_msg") || resp_str.contains("error_code") {
+            return json!({ "error": format!("Upload rejected: {}", resp_str) });
         }
 
         json!({

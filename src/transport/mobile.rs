@@ -232,14 +232,23 @@ fn json_to_msgpack(val: &JsonValue) -> MsgPackValue {
         JsonValue::Object(obj) => {
             let mut map = Vec::new();
             for (k, v) in obj {
-                // TODO this sucks
-                if (k == "mode" || k == "chatCacheFingerprint" || k == "chatsCountGroups") && v.is_array() {
+                if (k == "mode" || k == "chatCacheFingerprint" || k == "chatsCountGroups" || k == "wave" || k == "previewData") && v.is_array() {
                     let arr = v.as_array().unwrap();
                     let bytes: Vec<u8> = arr
                         .iter()
-                        .filter_map(|x| x.as_u64().map(|n| n as u8))
+                        .filter_map(|x| x.as_u64().map(|n| n as u8).or_else(|| x.as_i64().map(|n| n as u8)))
                         .collect();
 
+                    map.push((
+                        MsgPackValue::String(k.as_str().into()),
+                        MsgPackValue::Binary(bytes),
+                    ));
+                    continue;
+                }
+
+                if (k == "wave" || k == "previewData") && v.is_string() {
+                    let s = v.as_str().unwrap();
+                    let bytes = s.as_bytes().to_vec();
                     map.push((
                         MsgPackValue::String(k.as_str().into()),
                         MsgPackValue::Binary(bytes),

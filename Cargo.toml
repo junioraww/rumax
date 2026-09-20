@@ -25,6 +25,10 @@ path = "examples/register.rs"
 name = "token"
 path = "examples/token.rs"
 
+[[example]]
+name = "media_test"
+path = "examples/media_test.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
