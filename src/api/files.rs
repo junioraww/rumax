@@ -29,11 +29,12 @@ impl MaxClient {
     pub async fn get_video_upload(
         &self,
         count: i64,
-        profile: bool,
+        _profile: bool,
     ) -> ClientResult<Response> {
         let payload = json!({
+            "uploaderType": 0,
+            "type": 0,
             "count": count,
-            "profile": profile,
         });
         self.send_and_wait(82, payload, 0).await
     }
@@ -162,12 +163,7 @@ impl MaxClient {
             Err(e) => return json!({ "error": format!("Failed to build client: {}", e) }),
         };
 
-        let effective_filename = std::path::Path::new(&_file_name)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .filter(|n| !n.is_empty())
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| format!("{}.bin", video_id));
+        let effective_filename = (chrono::Utc::now().timestamp_micros() & 0x7FFF_FFFF).to_string();
 
         let response = match client.post(upload_url)
         .header("Content-Type", "application/octet-stream")
