@@ -41,12 +41,12 @@ pub struct Login2Flags {
 }
 
 impl MaxClient {
-    /**
-     * Начало логина
-     */
-    pub async fn start_auth(&self, phone: String) -> ClientResult<Response> {
-        info!("Запрос SMS-кода: phone_set={}", !phone.is_empty());
-
+    async fn request_code_internal(
+        &self,
+        phone: String,
+        auth_type: &str,
+        language: Option<&str>,
+    ) -> ClientResult<Response> {
         let (identity, calls_seed, version_provider, is_connected) = {
             let state = self.state.lock().await;
             (
@@ -58,7 +58,7 @@ impl MaxClient {
         };
 
         if !is_connected || identity.is_none() {
-            error!("Запрос start_auth вызван без установленного соединения / handshake");
+            error!("Auth request failed: no handshake response available");
             return Err(Error::ConnectionFailed(
                 "No handshake response available for request_code".into(),
             ));
@@ -69,7 +69,7 @@ impl MaxClient {
 
         let mode = if !is_web {
             let seed = calls_seed.ok_or_else(|| {
-                error!("handshake_response.calls_seed отсутствует при device_type != WEB");
+                error!("handshake_response.calls_seed is missing");
                 Error::ConnectionFailed("handshake_response.calls_seed is missing".into())
             })?;
 
@@ -80,20 +80,20 @@ impl MaxClient {
             };
 
             let version_data = version_provider.get_version(app_ver).await.ok_or_else(|| {
-                error!("Версия {} не найдена", app_ver);
+                error!("Version {} not found", app_ver);
                 Error::ConnectionFailed("fingerprint_generator is missing and DeviceType != WEB".into())
             })?;
 
             let arch = identity.user_agent.arch.as_deref().unwrap_or("arm64-v8a");
-            debug!("Генерация отпечатка: device_id={}, arch={}, seed={}", identity.device_id, arch, seed);
+            debug!("Fingerprint generation: device_id={}, arch={}, seed={}", identity.device_id, arch, seed);
 
             let fp = FingerprintGenerator::new(version_data)
-            .generate_fingerprint(&identity.device_id, seed, Some(arch));
+                .generate_fingerprint(&identity.device_id, seed, Some(arch));
 
             if let Some(ref bytes) = fp {
-                debug!("Отпечаток сгенерирован (размер: {}): {}", bytes.len(), hex::encode(bytes));
+                debug!("Fingerprint generated (size: {}): {}", bytes.len(), hex::encode(bytes));
             } else {
-                warn!("Не удалось сгенерировать отпечаток для arch={}", arch);
+                warn!("Failed to generate fingerprint for arch={}", arch);
             }
 
             fp
@@ -103,7 +103,8 @@ impl MaxClient {
 
         let mut payload = json!({
             "phone": phone,
-            "type": "START_AUTH"
+            "type": auth_type,
+            "language": language.unwrap_or("ru"),
         });
 
         if let Some(fp_bytes) = mode {
@@ -111,18 +112,27 @@ impl MaxClient {
         }
 
         let resp = self.send_and_wait(17, payload, 0).await?;
-        // ----------------------------------------
 
         if let Some(map) = resp.payload.as_object() {
-            debug!("sms code request accepted payload_keys={:?}", map.keys().collect::<Vec<_>>());
+            debug!("Auth code request accepted: keys={:?}", map.keys().collect::<Vec<_>>());
         }
 
         if let Some(token) = resp.payload.get("token").and_then(|t| t.as_str()) {
-            info!("Получен temp token: {}", token);
+            info!("Received temp token: {}", token);
             self.set_temp_token(token.to_string()).await;
         }
 
         Ok(resp)
+    }
+
+    pub async fn start_auth(&self, phone: String) -> ClientResult<Response> {
+        info!("Requesting auth code: phone_set={}", !phone.is_empty());
+        self.request_code_internal(phone, "START_AUTH", Some("ru")).await
+    }
+
+    pub async fn resend_auth(&self, phone: String) -> ClientResult<Response> {
+        info!("Resending auth code: phone_set={}", !phone.is_empty());
+        self.request_code_internal(phone, "RESEND", Some("ru")).await
     }
     
     /**
