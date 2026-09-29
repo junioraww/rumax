@@ -35,7 +35,25 @@ impl MaxClient {
             args_map.get("attaches").cloned().unwrap_or(json!([])),
         );
 
-        if let Some(link) = args_map.get("replyTo").and_then(|id| {
+        if let Some(mut link) = args_map.get("link").cloned() {
+            if let Some(link_obj) = link.as_object_mut() {
+                if let Some(raw_id) = link_obj.get("messageId") {
+                    if let Some(id_str) = raw_id.as_str() {
+                        if let Ok(parsed) = id_str.parse::<u64>() {
+                            link_obj.insert("messageId".into(), json!(parsed));
+                        }
+                    }
+                }
+                if let Some(raw_chat_id) = link_obj.get("chatId") {
+                    if let Some(chat_id_str) = raw_chat_id.as_str() {
+                        if let Ok(parsed) = chat_id_str.parse::<i64>() {
+                            link_obj.insert("chatId".into(), json!(parsed));
+                        }
+                    }
+                }
+            }
+            message.insert("link".into(), link);
+        } else if let Some(link) = args_map.get("replyTo").and_then(|id| {
             id.as_str()
             .and_then(|s| s.parse::<u64>().ok())
             .map(|num| {
@@ -240,5 +258,32 @@ impl MaxClient {
             "mediaId": media_id,
         });
         self.send_and_wait(202, payload, 0).await
+    }
+
+    pub async fn get_complaint_reasons(&self) -> ClientResult<Response> {
+        let payload = json!({
+            "complainSync": 0,
+        });
+        self.send_and_wait(162, payload, 0).await
+    }
+
+    pub async fn send_complaint(
+        &self,
+        reason_id: i64,
+        type_id: i64,
+        ids: Vec<u64>,
+        parent_id: Option<i64>,
+    ) -> ClientResult<Response> {
+        let mut payload = json!({
+            "reasonId": reason_id,
+            "typeId": type_id,
+            "ids": ids,
+        });
+        if let Some(pid) = parent_id {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert("parentId".into(), json!(pid));
+            }
+        }
+        self.send_and_wait(161, payload, 0).await
     }
 }
