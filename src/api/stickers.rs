@@ -20,6 +20,14 @@ impl MaxClient {
         self.send_and_wait(27, payload, 0).await
     }
 
+    pub async fn get_animoji_sets(&self, sync: i64) -> ClientResult<Response> {
+        let payload = json!({
+            "type": "ANIMOJI_SET",
+            "sync": sync,
+        });
+        self.send_and_wait(27, payload, 0).await
+    }
+
     pub async fn get_assets_section(
         &self,
         section_id: String,
