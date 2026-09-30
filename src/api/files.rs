@@ -87,6 +87,7 @@ impl MaxClient {
             match ext.as_str() {
                 "jpg" | "jpeg" => "image/jpeg".to_string(),
                 "png" => "image/png".to_string(),
+                "webp" => "image/webp".to_string(),
                 _ => {
                     return json!({ "error": "Unsupported file extension" });
                 }

@@ -52,5 +52,29 @@ impl MaxClient {
         });
         self.send_and_wait(34, payload, 0).await
     }
+
+    pub async fn get_contact_photos(
+        &self,
+        contact_id: u64,
+        from: i64,
+        count: i64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "contactId": contact_id,
+            "from": from,
+            "count": count,
+        });
+        self.send_and_wait(39, payload, 0).await
+    }
+
+    pub async fn remove_contact_photo(
+        &self,
+        photo_id: u64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "photoId": photo_id,
+        });
+        self.send_and_wait(43, payload, 0).await
+    }
 }
 
