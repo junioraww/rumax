@@ -51,4 +51,15 @@ impl MaxClient {
 
         self.send_and_wait(16, Value::Object(payload), 0).await
     }
+
+    pub async fn set_profile_photo(
+        &self,
+        photo_token: String,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "photoToken": photo_token,
+            "avatarType": "USER_AVATAR",
+        });
+        self.send_and_wait(16, payload, 0).await
+    }
 }

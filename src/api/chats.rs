@@ -119,6 +119,18 @@ impl MaxClient {
         self.send_and_wait(55, Value::Object(payload), 0).await
     }
 
+    pub async fn set_chat_photo(
+        &self,
+        chat_id: i64,
+        photo_token: String,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+            "photoToken": photo_token,
+        });
+        self.send_and_wait(55, payload, 0).await
+    }
+
     pub async fn join_group(
         &self,
         link: String,
