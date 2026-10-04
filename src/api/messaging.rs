@@ -168,6 +168,7 @@ impl MaxClient {
             "chatId": chat_id,
             "messageIds": message_ids,
             "forMe": for_me,
+            "itemType": "REGULAR",
         });
 
         self.send_and_wait(66, payload, 0).await
@@ -181,14 +182,29 @@ impl MaxClient {
         attaches: Option<Vec<Value>>,
         elements: Option<Vec<Value>>,
     ) -> ClientResult<Response> {
+        let mut map = serde_json::Map::new();
+        map.insert("chatId".into(), json!(chat_id));
+        map.insert("messageId".into(), json!(message_id));
+        map.insert("text".into(), json!(text));
+        map.insert("elements".into(), json!(elements.unwrap_or_default()));
+        if let Some(att) = attaches {
+            map.insert("attachments".into(), json!(att));
+        }
+        self.send_and_wait(67, Value::Object(map), 0).await
+    }
+
+    pub async fn get_detailed_reactions(
+        &self,
+        chat_id: i64,
+        message_id: u64,
+        count: Option<i32>,
+    ) -> ClientResult<Response> {
         let payload = json!({
             "chatId": chat_id,
             "messageId": message_id,
-            "text": text,
-            "elements": elements.unwrap_or_default(),
-            "attaches": attaches.unwrap_or_default(),
+            "count": count.unwrap_or(100),
         });
-        self.send_and_wait(67, payload, 0).await
+        self.send_and_wait(181, payload, 0).await
     }
 
     pub async fn fetch_history(
