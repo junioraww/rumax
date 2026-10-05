@@ -202,33 +202,48 @@ impl MaxClient {
         Ok(resp)
     }
 
-    /**
-     * Регистрация
-     */
     pub async fn submit_register(
         &self,
         first_name: String,
         last_name: Option<String>,
     ) -> ClientResult<Response> {
-        let payload = json!({
+        let reg_token = {
+            let state = self.state.lock().await;
+            state.temp_token.clone()
+        };
+
+        let mut payload = json!({
             "firstName": first_name,
-            "lastName": last_name,
             "photoId": 2981369,
             "avatarType": "PRESET_AVATAR",
             "tokenType": "REGISTER",
         });
-        
-        let resp = self.send_and_wait(23, payload, 0).await?;
-        
-        if let Some(token) = resp
+
+        if let Some(ref token) = reg_token {
+            payload["token"] = json!(token);
+        }
+
+        if let Some(ref last) = last_name {
+            payload["lastName"] = json!(last);
+        }
+
+        let mut resp = self.send_and_wait(23, payload, 0).await?;
+
+        let final_token = resp
             .payload
             .get("token")
-            .and_then(|t| t.as_str())
-        {
-            log::info!("Token received! {:?}", token.to_string());
-            self.set_token(token.to_string()).await;
+            .and_then(|t| t.as_str().map(|s| s.to_string()))
+            .or(reg_token);
+
+        if let Some(ref token) = final_token {
+            self.set_token(token.clone()).await;
+            if resp.payload.get("token").is_none() {
+                if let Some(obj) = resp.payload.as_object_mut() {
+                    obj.insert("token".to_string(), json!(token));
+                }
+            }
         }
-        
+
         Ok(resp)
     }
     

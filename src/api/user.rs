@@ -3,12 +3,10 @@ use crate::models::Response;
 use serde_json::{json, Map, Value};
 
 impl MaxClient {
-    /*
-     * Удаление сессии
-     */
     pub async fn logout(&self) -> ClientResult<Response> {
+        let resp = self.send_and_wait(20, json!({}), 0).await;
         self.disconnect().await;
-        self.send_and_wait(20, json!({}), 0).await
+        resp
     }
 
     /*
