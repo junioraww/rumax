@@ -134,6 +134,22 @@ impl MaxClient {
         info!("Resending auth code: phone_set={}", !phone.is_empty());
         self.request_code_internal(phone, "RESEND", Some("ru")).await
     }
+
+    pub async fn request_qr(&self) -> ClientResult<Response> {
+        self.send_and_wait(288, json!({}), 0).await
+    }
+
+    pub async fn check_qr(&self, track_id: String) -> ClientResult<Response> {
+        self.send_and_wait(289, json!({ "trackId": track_id }), 0).await
+    }
+
+    pub async fn login_by_qr(&self, track_id: String) -> ClientResult<Response> {
+        let resp = self.send_and_wait(291, json!({ "trackId": track_id }), 0).await?;
+        if let Some(t) = resp.payload.pointer("/tokenAttrs/LOGIN/token").and_then(|t| t.as_str()) {
+            self.set_token(t.to_string()).await;
+        }
+        Ok(resp)
+    }
     
     /**
      * Завершение логина
@@ -278,27 +294,41 @@ impl MaxClient {
             None
         };
 
-        let mut payload = json!({
-            "userAgent": identity.user_agent,
-            "interactive": true,
-            "token": token,
-            "chatsSync": sync_state.chats_sync,
-            "contactsSync": sync_state.contacts_sync,
-            "presenceSync": sync_state.presence_sync,
-            "draftsSync": sync_state.drafts_sync,
-            "exp": {
-                "chatsCountGroups": vec![0x0a, 0x32]
-            }
-        });
+        let mut payload = if is_web {
+            json!({
+                "token": token,
+                "chatsCount": 40,
+                "interactive": true,
+                "chatsSync": sync_state.chats_sync,
+                "contactsSync": sync_state.contacts_sync,
+                "presenceSync": sync_state.presence_sync,
+                "draftsSync": sync_state.drafts_sync,
+            })
+        } else {
+            json!({
+                "userAgent": identity.user_agent,
+                "interactive": true,
+                "token": token,
+                "chatsSync": sync_state.chats_sync,
+                "contactsSync": sync_state.contacts_sync,
+                "presenceSync": sync_state.presence_sync,
+                "draftsSync": sync_state.drafts_sync,
+                "exp": {
+                    "chatsCountGroups": vec![0x0a, 0x32]
+                }
+            })
+        };
 
         if let Some(fp) = chat_cache_fingerprint {
             payload["chatCacheFingerprint"] = json!(fp);
         }
 
-        if let Some(hash) = &sync_state.config_hash {
-            payload["configHash"] = hash.clone();
-        } else {
-            payload["configHash"] = json!(DEFAULT_CONFIG_HASH);
+        if !is_web {
+            if let Some(hash) = &sync_state.config_hash {
+                payload["configHash"] = hash.clone();
+            } else {
+                payload["configHash"] = json!(DEFAULT_CONFIG_HASH);
+            }
         }
 
         let login_response = self.send_and_wait(19, payload, 0).await?;
