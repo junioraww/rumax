@@ -38,7 +38,7 @@ use models::{Request, Response, Identity};
 pub use api::telemetry::TelemetryChat;
 use navigation::NavigationPlanner;
 
-pub use api::auth::SyncState;
+pub use api::auth::{SyncState, QrLoginSession};
 
 pub const MINTSIFRY_ROOT_CA: &[u8] = include_bytes!("../assets/rootca_ssl_rsa2022.crt");
 
