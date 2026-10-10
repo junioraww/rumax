@@ -1,5 +1,6 @@
 /target
 .device.id
+.device.web.id
 .session.token
 **/*.kate-swp
 **/*.pem

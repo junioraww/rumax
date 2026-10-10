@@ -29,6 +29,10 @@ path = "examples/token.rs"
 name = "media_test"
 path = "examples/media_test.rs"
 
+[[example]]
+name = "qr_login"
+path = "examples/qr_login.rs"
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -56,3 +60,4 @@ sha2 = "0.11.0"
 [dev-dependencies]
 env_logger = "0.10"
 uuid = { version = "1", features = ["v4"] }
+qrcode = { version = "0.14", default-features = false }
