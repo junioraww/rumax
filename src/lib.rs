@@ -236,7 +236,7 @@ impl MaxClient {
         } else {
             json!({
                 "deviceId": identity.device_id,
-                "userAgent": identity.user_agent,
+                "userAgent": identity.user_agent.to_web_payload(),
             })
         };
 
