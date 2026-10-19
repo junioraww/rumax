@@ -56,6 +56,41 @@ const LOCALE_TIMEZONES: &[(&str, &str)] = &[
     ("ru", "Asia/Vladivostok"),
 ];
 
+/// WEB-версия приложения (как в браузере web.max.ru).
+/// Нужна в частности для QR-авторизации (opcode 288/289).
+pub const WEB_APP_VERSION: &str = "26.6.17";
+
+pub fn generate_web_device() -> Identity {
+    let mut rng = rand::thread_rng();
+    let loc = LOCALE_TIMEZONES.choose(&mut rng).unwrap();
+
+    let mt_instance = Uuid::new_v4().to_string();
+    let device_id = Uuid::new_v4().to_string();
+
+    Identity {
+        device_id,
+        mt_instance,
+        user_agent: UserAgent {
+            device_type: "WEB".to_string(),
+            app_version: WEB_APP_VERSION.to_string(),
+            os_version: "Linux".to_string(),
+            timezone: loc.1.to_string(),
+            screen: "1080x1920 1.0x".to_string(),
+            push_device_type: Some("WEBPUSH".to_string()),
+            arch: None,
+            locale: "ru".to_string(),
+            build_number: 0,
+            device_name: "Firefox".to_string(),
+            device_locale: "ru".to_string(),
+            release: None,
+            header_user_agent: Some(
+                "Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0"
+                    .to_string(),
+            ),
+        },
+    }
+}
+
 pub fn generate_device() -> Identity {
     let mut rng = rand::thread_rng();
 
