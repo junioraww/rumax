@@ -1,9 +1,11 @@
 use crate::{errors::{ClientResult, Error}, MaxClient};
 use crate::models::{Response};
 use crate::fingerprint::FingerprintGenerator;
+use chrono::Utc;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +40,32 @@ pub struct Login2Flags {
     pub contact_enabled: bool,
     #[serde(default)]
     pub profile_enabled: bool,
+}
+
+/// Данные QR-сессии, полученные от QR_AUTH_REQUEST (opcode 288).
+///
+/// `qr_link` — ссылка, которую нужно превратить в QR-изображение и
+/// показать пользователю. Пользователь сканирует его приложением MAX.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrLoginSession {
+    /// URL QR-кода для отображения
+    pub qr_link: String,
+    /// UUID для отслеживания статуса авторизации
+    pub track_id: String,
+    /// Интервал опроса статуса (мс)
+    #[serde(default = "default_qr_polling_interval")]
+    pub polling_interval: u64,
+    /// Время жизни QR-кода (мс)
+    #[serde(default)]
+    pub ttl: i64,
+    /// Unix timestamp истечения QR-кода (мс)
+    #[serde(default)]
+    pub expires_at: i64,
+}
+
+fn default_qr_polling_interval() -> u64 {
+    5000
 }
 
 impl MaxClient {
@@ -282,7 +310,7 @@ impl MaxClient {
             };
 
             let version_data = version_provider.get_version(app_ver).await.ok_or_else(|| {
-                Error::ConnectionFailed(format!("Версия {} не найдена", app_ver))
+                Error::ConnectionFailed(format!("Version {} not found", app_ver))
             })?;
 
             let arch = identity.user_agent.arch.as_deref().unwrap_or("arm64-v8a");
@@ -293,28 +321,45 @@ impl MaxClient {
             None
         };
 
-        let mut payload = json!({
-            "userAgent": identity.user_agent,
-            "interactive": true,
-            "token": token,
-            "chatsSync": sync_state.chats_sync,
-            "contactsSync": sync_state.contacts_sync,
-            "presenceSync": sync_state.presence_sync,
-            "draftsSync": sync_state.drafts_sync,
-            "exp": {
-                "chatsCountGroups": vec![0x0a, 0x32]
-            }
-        });
-
-        if let Some(fp) = chat_cache_fingerprint {
-            payload["chatCacheFingerprint"] = json!(fp);
-        }
-
-        if let Some(hash) = &sync_state.config_hash {
-            payload["configHash"] = hash.clone();
+        // WEB-клиент использует сокращённый payload (без userAgent / fingerprint /
+        // exp / configHash), см. PyMax WebSyncPayload. Мобильный клиент, наоборот,
+        // шлёт расширенный payload с userAgent и бинарным fingerprint.
+        let payload = if is_web {
+            json!({
+                "token": token,
+                "chatsCount": 40,
+                "interactive": true,
+                "chatsSync": sync_state.chats_sync,
+                "contactsSync": sync_state.contacts_sync,
+                "draftsSync": sync_state.drafts_sync,
+                "presenceSync": sync_state.presence_sync,
+            })
         } else {
-            payload["configHash"] = json!(DEFAULT_CONFIG_HASH);
-        }
+            let mut p = json!({
+                "userAgent": identity.user_agent,
+                "interactive": true,
+                "token": token,
+                "chatsSync": sync_state.chats_sync,
+                "contactsSync": sync_state.contacts_sync,
+                "presenceSync": sync_state.presence_sync,
+                "draftsSync": sync_state.drafts_sync,
+                "exp": {
+                    "chatsCountGroups": vec![0x0a, 0x32]
+                }
+            });
+
+            if let Some(fp) = chat_cache_fingerprint {
+                p["chatCacheFingerprint"] = json!(fp);
+            }
+
+            if let Some(hash) = &sync_state.config_hash {
+                p["configHash"] = hash.clone();
+            } else {
+                p["configHash"] = json!(DEFAULT_CONFIG_HASH);
+            }
+
+            p
+        };
 
         let login_response = self.send_and_wait(19, payload, 0).await?;
 
@@ -339,28 +384,225 @@ impl MaxClient {
 
         let mut login2_response_opt = None;
 
-        if let Some(flags_val) = login_response.payload.get("login2Flags") {
-            let flags: Login2Flags = serde_json::from_value(flags_val.clone()).unwrap_or_default();
+        // LOGIN2 (opcode 8) выполняется только для мобильного клиента
+        // (см. PyMax: WebClient делает лишь LOGIN, без login2).
+        if !is_web {
+            if let Some(flags_val) = login_response.payload.get("login2Flags") {
+                let flags: Login2Flags =
+                    serde_json::from_value(flags_val.clone()).unwrap_or_default();
 
-            if flags.config_enabled || flags.contact_enabled || flags.profile_enabled {
-                let login2_payload = json!({
-                    "needProfile": flags.profile_enabled,
-                    "contactsSync": if flags.contact_enabled { sync_state.contacts_sync } else { -1 },
-                    "configHash": sync_state.config_hash,
-                });
+                if flags.config_enabled || flags.contact_enabled || flags.profile_enabled {
+                    let login2_payload = json!({
+                        "needProfile": flags.profile_enabled,
+                        "contactsSync": if flags.contact_enabled { sync_state.contacts_sync } else { -1 },
+                        "configHash": sync_state.config_hash,
+                    });
 
-                let login2_response = self.send_and_wait(8, login2_payload, 0).await?;
+                    let login2_response = self.send_and_wait(8, login2_payload, 0).await?;
 
-                if let Some(config) = login2_response.payload.get("config") {
-                    if let Some(hash) = config.get("hash") {
-                        sync_state.config_hash = Some(hash.clone());
+                    if let Some(config) = login2_response.payload.get("config") {
+                        if let Some(hash) = config.get("hash") {
+                            sync_state.config_hash = Some(hash.clone());
+                        }
                     }
-                }
 
-                login2_response_opt = Some(login2_response);
+                    login2_response_opt = Some(login2_response);
+                }
             }
         }
 
         Ok((login_response, login2_response_opt, sync_state))
+    }
+
+    /*
+     * ============================ QR-авторизация ============================
+     *
+     * Процесс (см. max-api-docs + PyMax):
+     *   INIT (6) → QR_AUTH_REQUEST (288) → показ QR → пользователь сканирует
+     *   → QR_AUTH_POLL (289) в цикле, ожидание status.loginAvailable == true
+     *   → LOGIN_BY_QR (291) {trackId} → tokenAttrs.LOGIN.token → LOGIN (19)
+     *
+     *     Примечание: у некоторых клиентов (mobile) есть также отдельный
+     *   опкод AUTH_QR_APPROVE (290) {qrLink} для подтверждения чужого QR.
+     */
+
+    /// Извлекает токен доступа из payload (`tokenAttrs.LOGIN.token`).
+    fn extract_login_token(payload: &Value) -> Option<String> {
+        if let Some(token) = payload
+            .get("tokenAttrs")
+            .and_then(|attrs| attrs.get("LOGIN"))
+            .and_then(|login| login.get("token"))
+            .and_then(|t| t.as_str())
+        {
+            return Some(token.to_string());
+        }
+        payload
+            .get("token")
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// QR-авторизация, шаг 1: запрос QR-кода (opcode 288).
+    ///
+    /// Возвращает [`QrLoginSession`] с `qr_link` (для отображения) и `track_id`.
+    pub async fn qr_login_request(&self) -> ClientResult<QrLoginSession> {
+        let resp = self.send_and_wait(288, json!({}), 0).await?;
+        let session: QrLoginSession = serde_json::from_value(resp.payload.clone()).map_err(|e| {
+            Error::Other(format!("qr_login_request: failed to parse response: {}", e))
+        })?;
+        info!(
+            "QR: request ok (trackId={}, pollInterval={}ms, ttl={}ms, expiresAt={})",
+            session.track_id, session.polling_interval, session.ttl, session.expires_at
+        );
+        Ok(session)
+    }
+
+    /// QR-авторизация, шаг 2: однократный опрос статуса (opcode 289).
+    pub async fn qr_login_poll(&self, track_id: &str) -> ClientResult<Response> {
+        self.send_and_wait(289, json!({ "trackId": track_id }), 0)
+            .await
+    }
+
+    /// QR-авторизация, шаг 3: ожидание сканирования и завершение входа.
+    ///
+    /// Опрашивает статус (opcode 289) с интервалом `polling_interval`. Когда
+    /// `status.loginAvailable` становится `true` (пользователь подтвердил вход
+    /// в приложении MAX), вызывается LOGIN_BY_QR (opcode 291) для получения
+    /// токена доступа.
+    ///
+    /// При успехе сохраняет токен в клиенте (`set_token`) и возвращает его.
+    /// Ошибка `track.not.found` означает, что QR-код истёк/уже использован.
+    pub async fn qr_login_wait(&self, session: &QrLoginSession) -> ClientResult<String> {
+        let interval_ms = if session.polling_interval > 0 {
+            session.polling_interval
+        } else {
+            5000
+        };
+
+        let now_ms = Utc::now().timestamp_millis();
+        let deadline_ms = if session.expires_at > 0 {
+            session.expires_at
+        } else if session.ttl > 0 {
+            now_ms + session.ttl
+        } else {
+            now_ms + 120_000
+        };
+        let total_wait = (deadline_ms - now_ms).max(1000) as u64;
+
+        let mut attempt: u64 = 0;
+        info!(
+            "QR: waiting for scan (trackId={}, pollInterval={}ms, expiresAt={})",
+            session.track_id, interval_ms, deadline_ms
+        );
+
+        loop {
+            if Utc::now().timestamp_millis() >= deadline_ms {
+                warn!("QR: timed out after {}ms without confirmation", total_wait);
+                return Err(Error::RequestTimeout(Duration::from_millis(total_wait)));
+            }
+
+            attempt += 1;
+            match self.qr_login_poll(&session.track_id).await {
+                Ok(resp) => {
+                    debug!(
+                        "QR poll #{}: cmd={} opcode={} payload={}",
+                        attempt, resp.cmd, resp.opcode, resp.payload
+                    );
+
+                    // Некоторые реализации возвращают токен прямо в ответе на опрос.
+                    if let Some(token) = Self::extract_login_token(&resp.payload) {
+                        self.set_token(token.clone()).await;
+                        info!(
+                            "QR: authorization succeeded (token in poll response), poll #{}",
+                            attempt
+                        );
+                        return Ok(token);
+                    }
+
+                    let login_available = resp
+                        .payload
+                        .get("status")
+                        .and_then(|s| s.get("loginAvailable"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if login_available {
+                        info!(
+                            "QR poll #{}: scan confirmed (loginAvailable=true), completing login via LOGIN_BY_QR (291)",
+                            attempt
+                        );
+                        return self.qr_login_submit(&session.track_id).await;
+                    }
+
+                    info!(
+                        "QR poll #{}: still pending (payload={})",
+                        attempt, resp.payload
+                    );
+                }
+                Err(Error::ApiResponse(value)) => {
+                    warn!("QR poll #{}: api error payload={}", attempt, value);
+                    if value.to_string().contains("track.not.found") {
+                        warn!("QR: code expired or already used");
+                        return Err(Error::ApiResponse(value));
+                    }
+                }
+                Err(e) => {
+                    warn!("QR poll #{}: request failed: {}", attempt, e);
+                }
+            }
+
+            let remaining = deadline_ms - Utc::now().timestamp_millis();
+            if remaining <= 0 {
+                continue;
+            }
+            tokio::time::sleep(Duration::from_millis(interval_ms.min(remaining as u64))).await;
+        }
+    }
+
+    /// QR-авторизация, шаг 3b: подтверждение входа и получение токена
+    /// (LOGIN_BY_QR, opcode 291).
+    ///
+    /// Вызывается после того, как `status.loginAvailable` стал `true`.
+    /// Возвращает токен доступа и сохраняет его в клиенте. Если сервер требует
+    /// второй фактор, в ответе будет `passwordChallenge` — тогда вызовите
+    /// [`MaxClient::check_password`] с `track_id` из challenge.
+    pub async fn qr_login_submit(&self, track_id: &str) -> ClientResult<String> {
+        let resp = self
+            .send_and_wait(291, json!({ "trackId": track_id }), 0)
+            .await?;
+
+        debug!("QR LOGIN_BY_QR response payload={}", resp.payload);
+
+        if let Some(token) = Self::extract_login_token(&resp.payload) {
+            self.set_token(token.clone()).await;
+            info!("QR: authorization succeeded (LOGIN_BY_QR token)");
+            return Ok(token);
+        }
+
+        if let Some(challenge) = resp.payload.get("passwordChallenge") {
+            warn!(
+                "QR: 2FA password required (payload={}); call check_password with the challenge trackId",
+                challenge
+            );
+            return Err(Error::ApiResponse(resp.payload));
+        }
+
+        warn!("QR: no login token in LOGIN_BY_QR response: {}", resp.payload);
+        Err(Error::ApiResponse(resp.payload))
+    }
+
+    /// QR-авторизация, шаг 4: дождаться сканирования и выполнить полноценный
+    /// вход (LOGIN, opcode 19). Возвращает ответ LOGIN и состояние синхронизации.
+    ///
+    /// Обёртка над [`MaxClient::qr_login_wait`] + [`MaxClient::sync`]. После этого
+    /// клиент полностью авторизован и можно использовать остальные методы
+    /// (сообщения, чаты, контакты и т.д.).
+    pub async fn qr_login_confirm(
+        &self,
+        session: &QrLoginSession,
+    ) -> ClientResult<(Response, SyncState)> {
+        let _token = self.qr_login_wait(session).await?;
+        let (login, _login2, state) = self.sync(None).await?;
+        Ok((login, state))
     }
 }
