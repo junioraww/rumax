@@ -218,6 +218,12 @@ impl MaxClient {
     }
 
     pub async fn spawn_telemetry_task(&self) {
+        let mode = self.state.lock().await.telemetry_mode.clone();
+        if mode == "disabled" {
+            info!("Телеметрия отключена настройками (telemetry: disabled)");
+            return;
+        }
+
         let client = self.clone();
 
         let mut shutdown_rx = match self.state.lock().await.shutdown_tx.as_ref() {
