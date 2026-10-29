@@ -24,8 +24,12 @@ impl MaxClient {
             .and_then(|c| c.as_i64())
             .unwrap_or_else(|| -(Utc::now().timestamp_millis() as i64));
         message.insert("cid".into(), json!(cid));
-        message.insert("isLive".into(), json!(false));
-        message.insert("detectShare".into(), json!(false));
+        if let Some(is_live) = args_map.get("isLive").cloned() {
+            message.insert("isLive".into(), is_live);
+        }
+        if let Some(detect_share) = args_map.get("detectShare").cloned() {
+            message.insert("detectShare".into(), detect_share);
+        }
         message.insert(
             "elements".into(),
             args_map.get("elements").cloned().unwrap_or(json!([])),

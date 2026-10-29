@@ -80,9 +80,10 @@ struct ClientState {
     custom_ca_path: Option<String>,
     calls_seed: Option<i64>,
     version_provider: VersionDataProvider,
-    // new (updated telemetry)
     planner: NavigationPlanner,
     telemetry_chats: Vec<TelemetryChat>,
+    telemetry_mode: String,
+    interactive: bool,
 }
 
 pub enum ClientMode {
@@ -122,6 +123,8 @@ impl MaxClient {
                 version_provider: VersionDataProvider::new(),
                 planner: NavigationPlanner::new(),
                 telemetry_chats: Vec::new(),
+                telemetry_mode: "fake".to_string(),
+                interactive: true,
             })),
             event_tx,
         }
@@ -138,7 +141,15 @@ impl MaxClient {
     pub async fn set_user_id(&self, user_id: u64) {
         self.state.lock().await.user_id = Some(user_id);
     }
-    
+
+    pub async fn set_telemetry_mode(&self, mode: String) {
+        self.state.lock().await.telemetry_mode = mode;
+    }
+
+    pub async fn set_presence(&self, online: bool) {
+        self.state.lock().await.interactive = online;
+    }
+
     pub async fn get_token(&self) -> Option<String> {
         self.state.lock().await.token.clone()
     }
@@ -437,8 +448,9 @@ impl MaxClient {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    debug!("Отправка Ping...");
-                    match client.send_and_wait(1, json!({ "interactive": true }), 0).await {
+                    let interactive = client.state.lock().await.interactive;
+                    debug!("Отправка Ping (interactive: {})...", interactive);
+                    match client.send_and_wait(1, json!({ "interactive": interactive }), 0).await {
                         Ok(_) => {
                             info!("Pong получен");
                         }
