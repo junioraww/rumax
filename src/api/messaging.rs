@@ -129,12 +129,13 @@ impl MaxClient {
         &self,
         chat_id: i64,
         message_id: u64,
+        mark: Option<u64>,
     ) -> ClientResult<Response> {
         let payload = json!({
             "type": "READ_MESSAGE",
             "chatId": chat_id,
             "messageId": message_id,
-            "mark": Utc::now().timestamp_millis() as u64,
+            "mark": mark.unwrap_or_else(|| Utc::now().timestamp_millis() as u64),
         });
         self.send_and_wait(50, payload, 0).await
     }
