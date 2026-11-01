@@ -76,5 +76,41 @@ impl MaxClient {
         });
         self.send_and_wait(43, payload, 0).await
     }
+
+    pub async fn get_blacklist(
+        &self,
+        from: i64,
+        count: i64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "status": "BLOCKED",
+            "from": from,
+            "count": count,
+        });
+        self.send_and_wait(36, payload, 0).await
+    }
+
+    pub async fn add_to_blacklist(
+        &self,
+        contact_id: u64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "contactId": contact_id,
+            "action": "BLOCK",
+        });
+        self.send_and_wait(34, payload, 0).await
+    }
+
+    pub async fn remove_from_blacklist(
+        &self,
+        contact_id: u64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "contactId": contact_id,
+            "action": "UNBLOCK",
+        });
+        self.send_and_wait(34, payload, 0).await
+    }
 }
+
 
