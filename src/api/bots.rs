@@ -64,9 +64,14 @@ impl MaxClient {
         self.send_and_wait(144, payload, 0).await
     }
 
-    pub async fn suspend_bot(&self, bot_id: u64) -> ClientResult<Response> {
+    pub async fn suspend_bot(
+        &self,
+        bot_id: u64,
+        value: Option<bool>,
+    ) -> ClientResult<Response> {
         let payload = json!({
             "botId": bot_id,
+            "value": value.unwrap_or(true),
         });
         self.send_and_wait(119, payload, 0).await
     }
