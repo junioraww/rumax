@@ -307,4 +307,58 @@ impl MaxClient {
         }
         self.send_and_wait(161, payload, 0).await
     }
+
+    pub async fn vote_poll(
+        &self,
+        chat_id: i64,
+        message_id: u64,
+        poll_id: i64,
+        answers_ids: Vec<i64>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+            "messageId": message_id,
+            "pollId": poll_id,
+            "answersIds": answers_ids,
+        });
+        self.send_and_wait(304, payload, 0).await
+    }
+
+    pub async fn get_poll_updates(
+        &self,
+        chat_id: i64,
+        message_id: u64,
+        poll_id: i64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+            "polls": [
+                {
+                    "messageId": message_id,
+                    "pollId": poll_id,
+                }
+            ],
+        });
+        self.send_and_wait(306, payload, 0).await
+    }
+
+    pub async fn get_poll_voters(
+        &self,
+        chat_id: i64,
+        message_id: u64,
+        poll_id: i64,
+        answer_id: i64,
+        from: Option<i64>,
+        count: Option<i32>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+            "messageId": message_id,
+            "pollId": poll_id,
+            "answerId": answer_id,
+            "from": from.unwrap_or(0),
+            "count": count.unwrap_or(50),
+        });
+        self.send_and_wait(305, payload, 0).await
+    }
 }
