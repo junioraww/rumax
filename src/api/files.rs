@@ -69,6 +69,23 @@ impl MaxClient {
         self.send_and_wait(82, payload, 0).await
     }
 
+    pub async fn get_story_photo_upload(&self, count: i64) -> ClientResult<Response> {
+        let payload = json!({
+            "type": 1,
+            "count": count,
+        });
+        self.send_and_wait(80, payload, 0).await
+    }
+
+    pub async fn get_story_video_upload(&self, count: i64) -> ClientResult<Response> {
+        let payload = json!({
+            "uploaderType": 0,
+            "type": 3,
+            "count": count,
+        });
+        self.send_and_wait(82, payload, 0).await
+    }
+
     pub async fn upload_photo(
         &self,
         upload_url: String,
@@ -143,15 +160,15 @@ impl MaxClient {
         upload_url: String,
         video_id: u64,
         token: String,
-        mut file: File,
+        file: File,
         _file_name: String,
     ) -> Value {
-        let mut file_bytes = Vec::new();
-        if let Err(e) = file.read_to_end(&mut file_bytes).await {
-            return json!({ "error": format!("Failed to read video: {}", e) });
-        }
+        let metadata = match file.metadata().await {
+            Ok(m) => m,
+            Err(e) => return json!({ "error": format!("Failed to read video metadata: {}", e) }),
+        };
 
-        let file_size = file_bytes.len();
+        let file_size = metadata.len();
         if file_size == 0 {
             return json!({ "error": "Empty file" });
         }
@@ -165,6 +182,8 @@ impl MaxClient {
         };
 
         let effective_filename = (chrono::Utc::now().timestamp_micros() & 0x7FFF_FFFF).to_string();
+        let stream = ReaderStream::new(file);
+        let body = Body::wrap_stream(stream);
 
         let response = match client.post(upload_url)
         .header("Content-Type", "application/octet-stream")
@@ -172,7 +191,7 @@ impl MaxClient {
         .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
         .header("Content-Length", file_size.to_string())
         .header("Connection", "close")
-        .body(file_bytes)
+        .body(body)
         .send()
         .await
         {
@@ -193,9 +212,26 @@ impl MaxClient {
             return json!({ "error": format!("Upload rejected: {}", resp_str) });
         }
 
+        let parsed_token = if let Ok(val) = serde_json::from_slice::<Value>(&resp_bytes) {
+            if let Some(arr) = val.as_array() {
+                arr.iter().find_map(|item| item.get("token").and_then(|t| t.as_str()).map(|s| s.to_string()))
+            } else if let Some(obj) = val.as_object() {
+                obj.get("token")
+                    .or_else(|| obj.get("videoToken"))
+                    .or_else(|| obj.get("photoToken"))
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let final_token = parsed_token.unwrap_or(token);
+
         json!({
             "videoId": video_id,
-            "token": token
+            "token": final_token
         })
     }
 
