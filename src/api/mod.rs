@@ -10,3 +10,4 @@ pub mod channels;
 pub mod bots;
 pub mod stickers;
 pub mod two_factor;
+pub mod stories;
