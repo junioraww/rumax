@@ -3,7 +3,7 @@ use crate::models::{Response};
 use crate::fingerprint::FingerprintGenerator;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -202,10 +202,12 @@ impl MaxClient {
         Ok(resp)
     }
 
-    pub async fn submit_register(
+    pub async fn submit_register_with_avatar(
         &self,
         first_name: String,
         last_name: Option<String>,
+        photo_id: Option<i64>,
+        avatar_type: Option<String>,
     ) -> ClientResult<Response> {
         let reg_token = {
             let state = self.state.lock().await;
@@ -214,10 +216,13 @@ impl MaxClient {
 
         let mut payload = json!({
             "firstName": first_name,
-            "photoId": 2981369,
-            "avatarType": "PRESET_AVATAR",
             "tokenType": "REGISTER",
         });
+
+        if let Some(pid) = photo_id {
+            payload["photoId"] = json!(pid);
+            payload["avatarType"] = json!(avatar_type.unwrap_or_else(|| "PRESET_AVATAR".to_string()));
+        }
 
         if let Some(ref token) = reg_token {
             payload["token"] = json!(token);
@@ -245,6 +250,44 @@ impl MaxClient {
         }
 
         Ok(resp)
+    }
+
+    pub async fn submit_register(
+        &self,
+        first_name: String,
+        last_name: Option<String>,
+    ) -> ClientResult<Response> {
+        self.submit_register_with_avatar(first_name, last_name, None, None).await
+    }
+
+    pub async fn check_call_status(&self, track_id: String) -> ClientResult<Response> {
+        let resp = self.send_and_wait(294, json!({ "trackId": track_id }), 0).await?;
+        self.update_tokens_from_payload(&resp.payload).await;
+        Ok(resp)
+    }
+
+    pub async fn auth_by_track(&self, track_id: String) -> ClientResult<Response> {
+        let resp = self.send_and_wait(291, json!({ "trackId": track_id }), 0).await?;
+        self.update_tokens_from_payload(&resp.payload).await;
+        Ok(resp)
+    }
+
+    async fn update_tokens_from_payload(&self, payload: &Value) {
+        if let Some(token_attrs) = payload.get("tokenAttrs").and_then(|t| t.as_object()) {
+            for (token_type, value) in token_attrs {
+                if let Some(token) = value.get("token").and_then(|t| t.as_str()) {
+                    match token_type.as_str() {
+                        "REGISTER" => {
+                            self.set_temp_token(token.to_string()).await;
+                        }
+                        "LOGIN" => {
+                            self.set_token(token.to_string()).await;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
     
     /**
