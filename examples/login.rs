@@ -133,9 +133,6 @@ async fn main() {
                 client.set_user_id(id).await;
                 client.spawn_telemetry_task().await;
                 info!("Успешный вход! User ID: {}", id);
-
-                // в полноценном приложении тут стоит сохранить _new_sync_state в JSON-файл
-                // чтобы при следующем запуске скормить его в sync() вместо SyncState::default()
             } else {
                 error!("Не удалось найти профиль пользователя в ответе sync");
             }
