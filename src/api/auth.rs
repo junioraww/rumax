@@ -526,9 +526,9 @@ impl MaxClient {
 
                     debug!("QR poll #{}: still pending", attempt);
                 }
-                Err(Error::ConnectionClosed) => {
+                Err(e @ Error::ConnectionClosed(_)) => {
                     warn!("QR poll #{}: connection closed", attempt);
-                    return Err(Error::ConnectionClosed);
+                    return Err(e);
                 }
                 Err(Error::NotConnected) => {
                     warn!("QR poll #{}: not connected", attempt);
