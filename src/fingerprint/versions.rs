@@ -13,10 +13,14 @@ pub struct VersionDataProvider {
     local_path: String,
 }
 
+const EMBEDDED_VERSIONS_RAW: &str = include_str!("../../assets/mobile_versions.json");
+
 impl VersionDataProvider {
     pub fn new() -> Self {
+        let initial_cache: VersionsMap = serde_json::from_str(EMBEDDED_VERSIONS_RAW)
+            .unwrap_or_default();
         Self {
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(initial_cache)),
             http_client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -76,6 +80,13 @@ impl VersionDataProvider {
             self.merge_into_cache(map).await;
             if let Some(data) = found {
                 return Some(data);
+            }
+        }
+
+        {
+            let cache = self.cache.read().await;
+            if let Some((_, fallback)) = cache.iter().max_by_key(|(k, _)| *k) {
+                return Some(fallback.clone());
             }
         }
 

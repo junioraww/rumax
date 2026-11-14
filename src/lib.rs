@@ -273,7 +273,12 @@ impl MaxClient {
         
         state.writer = None;
         
-        state.pending.lock().unwrap().clear();
+        {
+            let mut pending_guard = state.pending.lock().unwrap();
+            for (_, sender) in pending_guard.drain() {
+                let _ = sender.send(Err(Error::ConnectionClosed("Соединение закрыто".to_string())));
+            }
+        }
         
         state.token = None;
         state.user_id = None;
@@ -360,9 +365,9 @@ impl MaxClient {
                 }
             }
             Ok(Ok(Err(e))) => Err(e),
-            Ok(Err(e)) => {
+            Ok(Err(_)) => {
                 error!("Ошибка получения ответа (канал закрыт) для seq: {}", request.seq);
-                Err(e.into())
+                Err(Error::ConnectionClosed("Соединение закрыто".to_string()))
             }
             Err(_) => {
                 warn!("Таймаут запроса для seq: {}", request.seq);
@@ -433,7 +438,13 @@ impl MaxClient {
                         }
                     }
                 }
-                _ = shutdown_rx.recv() => break,
+                _ = shutdown_rx.recv() => {
+                    let mut pending_guard = pending.lock().unwrap();
+                    for (_, sender) in pending_guard.drain() {
+                        let _ = sender.send(Err(Error::ConnectionClosed("Соединение закрыто".to_string())));
+                    }
+                    break;
+                }
             }
         }
     }
