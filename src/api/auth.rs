@@ -141,9 +141,6 @@ impl MaxClient {
         self.request_code_internal(phone, "RESEND", Some("ru")).await
     }
     
-    /**
-     * Завершение логина
-     */
     pub async fn check_code(&self, code: String) -> ClientResult<Response> {
         let state = self.state.lock().await;
         let token = state.temp_token.as_ref().ok_or("No temporary token found".to_string())?;
@@ -177,9 +174,6 @@ impl MaxClient {
         Ok(resp)
     }
 
-    /**
-     * Проверка облачного пароля (2FA)
-     */
     pub async fn check_password(&self, password: String, track_id: String) -> ClientResult<Response> {
         let payload = json!({
             "password": password,
@@ -296,10 +290,6 @@ impl MaxClient {
         }
     }
     
-    /**
-     * Перезаход в мессенджер
-     * TODO стоит переименовать методы как в pymax (sync -> login, start_auth -> start?)
-     */
     pub async fn sync(
         &self,
         sync_state: Option<SyncState>,

@@ -9,23 +9,14 @@ impl MaxClient {
         resp
     }
 
-    /*
-     * Список сессий
-     */
     pub async fn get_sessions(&self) -> ClientResult<Response> {
         self.send_and_wait(96, json!({}), 0).await
     }
 
-    /*
-     * Закрыть все сессии, кроме текущей
-     */
     pub async fn close_all_sessions(&self) -> ClientResult<Response> {
         self.send_and_wait(97, json!({}), 0).await
     }
 
-    /*
-     * Обновить профиль
-     */
     pub async fn update_profile(
         &self,
         first_name: String,

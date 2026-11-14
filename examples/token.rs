@@ -55,7 +55,6 @@ fn print_keys_tree(val: &Value, indent: usize) {
                         if len == 0 {
                             println!("{}{} [len: 0]", spaces, k);
                         } else {
-                            // Проверяем тип первого элемента: если объект, выводим его структуру
                             match &arr[0] {
                                 Value::Object(_) | Value::Array(_) => {
                                     println!("{}{} [len: {}]:", spaces, k, len);

@@ -15,6 +15,15 @@ pub struct VersionDataProvider {
 
 const EMBEDDED_VERSIONS_RAW: &str = include_str!("../../assets/mobile_versions.json");
 
+fn parse_version(v: &str) -> (u32, u32, u32) {
+    let mut parts = v.split('.').filter_map(|p| p.parse::<u32>().ok());
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
 impl VersionDataProvider {
     pub fn new() -> Self {
         let initial_cache: VersionsMap = serde_json::from_str(EMBEDDED_VERSIONS_RAW)
@@ -85,7 +94,10 @@ impl VersionDataProvider {
 
         {
             let cache = self.cache.read().await;
-            if let Some((_, fallback)) = cache.iter().max_by_key(|(k, _)| *k) {
+            if let Some((_, fallback)) = cache
+                .iter()
+                .max_by_key(|(k, v)| (parse_version(k), v.build_number))
+            {
                 return Some(fallback.clone());
             }
         }
