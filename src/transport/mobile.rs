@@ -144,29 +144,6 @@ impl MobileTransport {
     }
 }
 
-/*fn trust_certificate(
-    certs_file: &str,
-    key_file: &str
-) -> Result<Arc<ClientConfig>, String> {
-    let certs: Vec<CertificateDer> =
-    CertificateDer::pem_file_iter(certs_file)
-        .unwrap()
-        .map(|c| c.unwrap())
-        .collect();
-
-    let key = PrivateKeyDer::from_pem_file(key_file).unwrap();
-
-    let mut root_store = RootCertStore::empty();
-    root_store.add_parsable_certificates(certs.clone());
-
-    let config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_client_auth_cert(certs, key)
-        .unwrap();
-
-    Ok(Arc::new(config))
-}*/
-
 fn create_tls_config(use_custom_ca: bool, cert_path: Option<&str>) -> Result<ClientConfig, String> {
     let mut root_store = RootCertStore::empty();
 
