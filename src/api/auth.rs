@@ -140,22 +140,6 @@ impl MaxClient {
         info!("Resending auth code: phone_set={}", !phone.is_empty());
         self.request_code_internal(phone, "RESEND", Some("ru")).await
     }
-
-    pub async fn request_qr(&self) -> ClientResult<Response> {
-        self.send_and_wait(288, json!({}), 0).await
-    }
-
-    pub async fn check_qr(&self, track_id: String) -> ClientResult<Response> {
-        self.send_and_wait(289, json!({ "trackId": track_id }), 0).await
-    }
-
-    pub async fn login_by_qr(&self, track_id: String) -> ClientResult<Response> {
-        let resp = self.send_and_wait(291, json!({ "trackId": track_id }), 0).await?;
-        if let Some(t) = resp.payload.pointer("/tokenAttrs/LOGIN/token").and_then(|t| t.as_str()) {
-            self.set_token(t.to_string()).await;
-        }
-        Ok(resp)
-    }
     
     /**
      * Завершение логина
@@ -478,17 +462,29 @@ impl MaxClient {
     }
 
     pub async fn qr_login_wait(&self, session: &QrLoginSession) -> ClientResult<String> {
-        let interval_ms = if session.polling_interval > 0 {
-            session.polling_interval
-        } else {
+        let interval_ms = if session.polling_interval == 0 {
             5000
-        };
+        } else if session.polling_interval < 100 {
+            session.polling_interval * 1000
+        } else {
+            session.polling_interval
+        }
+        .max(1000);
 
         let now_ms = Utc::now().timestamp_millis();
         let deadline_ms = if session.expires_at > 0 {
-            session.expires_at
+            if session.expires_at < 100_000_000_000 {
+                session.expires_at * 1000
+            } else {
+                session.expires_at
+            }
         } else if session.ttl > 0 {
-            now_ms + session.ttl
+            let ttl_ms = if session.ttl < 100_000 {
+                session.ttl * 1000
+            } else {
+                session.ttl
+            };
+            now_ms + ttl_ms
         } else {
             now_ms + 120_000
         };
@@ -510,8 +506,8 @@ impl MaxClient {
             match self.qr_login_poll(&session.track_id).await {
                 Ok(resp) => {
                     debug!(
-                        "QR poll #{}: cmd={} opcode={} payload={}",
-                        attempt, resp.cmd, resp.opcode, resp.payload
+                        "QR poll #{}: cmd={} opcode={}",
+                        attempt, resp.cmd, resp.opcode
                     );
 
                     if let Some(token) = Self::extract_login_token(&resp.payload) {
@@ -538,17 +534,19 @@ impl MaxClient {
                         return self.qr_login_submit(&session.track_id).await;
                     }
 
-                    info!(
-                        "QR poll #{}: still pending (payload={})",
-                        attempt, resp.payload
-                    );
+                    debug!("QR poll #{}: still pending", attempt);
+                }
+                Err(Error::ConnectionClosed) => {
+                    warn!("QR poll #{}: connection closed", attempt);
+                    return Err(Error::ConnectionClosed);
+                }
+                Err(Error::NotConnected) => {
+                    warn!("QR poll #{}: not connected", attempt);
+                    return Err(Error::NotConnected);
                 }
                 Err(Error::ApiResponse(value)) => {
-                    warn!("QR poll #{}: api error payload={}", attempt, value);
-                    if value.to_string().contains("track.not.found") {
-                        warn!("QR: code expired or already used");
-                        return Err(Error::ApiResponse(value));
-                    }
+                    warn!("QR poll #{}: api error: {}", attempt, value);
+                    return Err(Error::ApiResponse(value));
                 }
                 Err(e) => {
                     warn!("QR poll #{}: request failed: {}", attempt, e);
@@ -568,7 +566,7 @@ impl MaxClient {
             .send_and_wait(291, json!({ "trackId": track_id }), 0)
             .await?;
 
-        debug!("QR LOGIN_BY_QR response payload={}", resp.payload);
+        debug!("QR LOGIN_BY_QR: cmd={} opcode={}", resp.cmd, resp.opcode);
 
         if let Some(token) = Self::extract_login_token(&resp.payload) {
             self.set_token(token.clone()).await;
@@ -578,13 +576,13 @@ impl MaxClient {
 
         if let Some(challenge) = resp.payload.get("passwordChallenge") {
             warn!(
-                "QR: 2FA password required (payload={}); call check_password with the challenge trackId",
-                challenge
+                "QR: 2FA password required; call check_password with challenge trackId: {:?}",
+                challenge.get("trackId")
             );
             return Err(Error::ApiResponse(resp.payload));
         }
 
-        warn!("QR: no login token in LOGIN_BY_QR response: {}", resp.payload);
+        warn!("QR: no login token in LOGIN_BY_QR response");
         Err(Error::ApiResponse(resp.payload))
     }
 
