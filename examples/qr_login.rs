@@ -84,8 +84,10 @@ async fn main() {
             info!("QR authorization succeeded!");
 
             if let Some(token) = client.get_token().await {
-                let _ = fs::write(TOKEN_FILE, token);
-                info!("Token saved to {}", TOKEN_FILE);
+                match fs::write(TOKEN_FILE, token) {
+                    Ok(_) => info!("Token saved to {}", TOKEN_FILE),
+                    Err(e) => error!("Failed to save token to {}: {}", TOKEN_FILE, e),
+                }
             }
 
             let mut events = client.subscribe();
