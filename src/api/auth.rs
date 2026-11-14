@@ -1,7 +1,7 @@
 use crate::{errors::{ClientResult, Error}, MaxClient};
 use crate::models::{Response};
 use crate::fingerprint::FingerprintGenerator;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -41,6 +41,47 @@ pub struct Login2Flags {
 }
 
 impl MaxClient {
+    async fn generate_mobile_fingerprint(
+        identity: &crate::models::Identity,
+        calls_seed: Option<i64>,
+        version_provider: &crate::fingerprint::VersionDataProvider,
+    ) -> ClientResult<Option<Vec<u8>>> {
+        if identity.user_agent.device_type.eq_ignore_ascii_case("web") {
+            return Ok(None);
+        }
+
+        let seed = calls_seed.ok_or_else(|| {
+            error!("handshake_response.calls_seed is missing");
+            Error::ConnectionFailed("handshake_response.calls_seed is missing".into())
+        })?;
+
+        let app_ver = if identity.user_agent.app_version.is_empty() {
+            "26.31.0"
+        } else {
+            &identity.user_agent.app_version
+        };
+
+        let version_data = version_provider.get_version(app_ver).await.ok_or_else(|| {
+            error!("Version {} not found", app_ver);
+            Error::ConnectionFailed(format!("Version {} not found", app_ver))
+        })?;
+
+        let arch = identity.user_agent.arch.as_deref().unwrap_or("arm64-v8a");
+        debug!(
+            "Fingerprint generation: device_id={}, arch={}, seed={}",
+            identity.device_id, arch, seed
+        );
+
+        let fp = FingerprintGenerator::new(version_data)
+            .generate_fingerprint(&identity.device_id, seed, Some(arch));
+
+        if fp.is_none() {
+            warn!("Failed to generate fingerprint for arch={}", arch);
+        }
+
+        Ok(fp)
+    }
+
     async fn request_code_internal(
         &self,
         phone: String,
@@ -65,41 +106,7 @@ impl MaxClient {
         }
 
         let identity = identity.unwrap();
-        let is_web = identity.user_agent.device_type.eq_ignore_ascii_case("web");
-
-        let mode = if !is_web {
-            let seed = calls_seed.ok_or_else(|| {
-                error!("handshake_response.calls_seed is missing");
-                Error::ConnectionFailed("handshake_response.calls_seed is missing".into())
-            })?;
-
-            let app_ver = if identity.user_agent.app_version.is_empty() {
-                "2.25.0"
-            } else {
-                &identity.user_agent.app_version
-            };
-
-            let version_data = version_provider.get_version(app_ver).await.ok_or_else(|| {
-                error!("Version {} not found", app_ver);
-                Error::ConnectionFailed("fingerprint_generator is missing and DeviceType != WEB".into())
-            })?;
-
-            let arch = identity.user_agent.arch.as_deref().unwrap_or("arm64-v8a");
-            debug!("Fingerprint generation: device_id={}, arch={}, seed={}", identity.device_id, arch, seed);
-
-            let fp = FingerprintGenerator::new(version_data)
-                .generate_fingerprint(&identity.device_id, seed, Some(arch));
-
-            if let Some(ref bytes) = fp {
-                debug!("Fingerprint generated (size: {}): {}", bytes.len(), hex::encode(bytes));
-            } else {
-                warn!("Failed to generate fingerprint for arch={}", arch);
-            }
-
-            fp
-        } else {
-            None
-        };
+        let mode = Self::generate_mobile_fingerprint(&identity, calls_seed, &version_provider).await?;
 
         let mut payload = json!({
             "phone": phone,
@@ -313,28 +320,8 @@ impl MaxClient {
         };
 
         let is_web = identity.user_agent.device_type.eq_ignore_ascii_case("web");
-        let chat_cache_fingerprint = if !is_web {
-            let seed = calls_seed.ok_or_else(|| {
-                Error::ConnectionFailed("handshake_response.calls_seed is missing".into())
-            })?;
-
-            let app_ver = if identity.user_agent.app_version.is_empty() {
-                "2.25.0"
-            } else {
-                &identity.user_agent.app_version
-            };
-
-            let version_data = version_provider.get_version(app_ver).await.ok_or_else(|| {
-                Error::ConnectionFailed(format!("Версия {} не найдена", app_ver))
-            })?;
-
-            let arch = identity.user_agent.arch.as_deref().unwrap_or("arm64-v8a");
-
-            FingerprintGenerator::new(version_data)
-            .generate_fingerprint(&identity.device_id, seed, Some(arch))
-        } else {
-            None
-        };
+        let chat_cache_fingerprint =
+            Self::generate_mobile_fingerprint(&identity, calls_seed, &version_provider).await?;
 
         let mut payload = json!({
             "userAgent": identity.user_agent,
