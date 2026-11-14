@@ -5,15 +5,9 @@ use tokio::{fs::File};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 use reqwest::{Body, multipart};
-//use futures_util::StreamExt;
 use std::time::Duration;
 
-//const CHUNK_SIZE: usize = 6 * 1024 * 1024;
-
 impl MaxClient {
-    /*
-     * Returns url, file_id
-     */
     pub async fn get_photo_upload(
         &self,
         count: i64,

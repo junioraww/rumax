@@ -154,10 +154,6 @@ impl MaxClient {
         self.state.lock().await.token.clone()
     }
 
-    /*
-     * TODO move to other place
-     */
-
     pub async fn set_host(&self, address: String, port: u16) {
         let mut state = self.state.lock().await;
         state.mobile_host = address;
@@ -237,17 +233,18 @@ impl MaxClient {
         
         debug!("Отправка Handshake");
         
-        let handshake_payload = if is_mobile {
+        let is_web = identity.user_agent.device_type.eq_ignore_ascii_case("web");
+        let handshake_payload = if is_web {
+            json!({
+                "deviceId": identity.device_id,
+                "userAgent": identity.user_agent.to_web_payload(),
+            })
+        } else {
             json!({
                 "clientSessionId": 1,
                 "mt_instanceid": identity.mt_instance,
                 "userAgent": identity.user_agent,
                 "deviceId": identity.device_id,
-            })
-        } else {
-            json!({
-                "deviceId": identity.device_id,
-                "userAgent": identity.user_agent.to_web_payload(),
             })
         };
 
@@ -291,29 +288,6 @@ impl MaxClient {
         let this = self.clone();
         
         Box::pin(async move {
-            /*let (should_reconnect, identity) = {
-                let state = this.state.lock().await;
-
-                if state.is_closed {
-                    return Err(Error::NotConnected)
-                }
-
-                if state.writer.is_none() {
-                    (true, state.identity.clone())
-                } else {
-                    (false, None)
-                }
-            };
-
-            if should_reconnect {
-                if let Some(i) = identity {
-                    debug!("Реконнект внутри send_frame...");
-                    this.connect(i, true).await?;
-                } else {
-                    return Err(Error::ConnectionFailed("Device ID not set".to_string()));
-                }
-            }*/
-
             let mut state = this.state.lock().await;
             if let Some(writer) = &mut state.writer {
                 writer.send(request).await
