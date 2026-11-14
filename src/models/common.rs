@@ -54,3 +54,17 @@ pub struct UserAgent {
     pub header_user_agent: Option<String>,
 }
 
+
+impl UserAgent {
+    pub fn to_web_payload(&self) -> serde_json::Value {
+        let mut v = serde_json::to_value(self).unwrap_or_default();
+        if let Some(m) = v.as_object_mut() {
+            m.retain(|k, _| matches!(k.as_str(),
+                "deviceType" | "locale" | "deviceLocale" | "osVersion" | "deviceName" |
+                "headerUserAgent" | "appVersion" | "screen" | "timezone" | "pushDeviceType"));
+            m.entry("headerUserAgent").or_insert(serde_json::json!(
+                crate::constants::Constants::USER_AGENT));
+        }
+        v
+    }
+}

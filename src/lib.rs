@@ -38,7 +38,7 @@ use models::{Request, Response, Identity};
 pub use api::telemetry::TelemetryChat;
 use navigation::NavigationPlanner;
 
-pub use api::auth::SyncState;
+pub use api::auth::{SyncState, QrLoginSession};
 
 pub const MINTSIFRY_ROOT_CA: &[u8] = include_bytes!("../assets/rootca_ssl_rsa2022.crt");
 
@@ -154,10 +154,6 @@ impl MaxClient {
         self.state.lock().await.token.clone()
     }
 
-    /*
-     * TODO move to other place
-     */
-
     pub async fn set_host(&self, address: String, port: u16) {
         let mut state = self.state.lock().await;
         state.mobile_host = address;
@@ -237,17 +233,18 @@ impl MaxClient {
         
         debug!("Отправка Handshake");
         
-        let handshake_payload = if is_mobile {
+        let is_web = identity.user_agent.device_type.eq_ignore_ascii_case("web");
+        let handshake_payload = if is_web {
+            json!({
+                "deviceId": identity.device_id,
+                "userAgent": identity.user_agent.to_web_payload(),
+            })
+        } else {
             json!({
                 "clientSessionId": 1,
                 "mt_instanceid": identity.mt_instance,
                 "userAgent": identity.user_agent,
                 "deviceId": identity.device_id,
-            })
-        } else {
-            json!({
-                "deviceId": identity.device_id,
-                "userAgent": identity.user_agent,
             })
         };
 
@@ -273,7 +270,12 @@ impl MaxClient {
         
         state.writer = None;
         
-        state.pending.lock().unwrap().clear();
+        {
+            let mut pending_guard = state.pending.lock().unwrap();
+            for (_, sender) in pending_guard.drain() {
+                let _ = sender.send(Err(Error::ConnectionClosed("Соединение закрыто".to_string())));
+            }
+        }
         
         state.token = None;
         state.user_id = None;
@@ -286,29 +288,6 @@ impl MaxClient {
         let this = self.clone();
         
         Box::pin(async move {
-            /*let (should_reconnect, identity) = {
-                let state = this.state.lock().await;
-
-                if state.is_closed {
-                    return Err(Error::NotConnected)
-                }
-
-                if state.writer.is_none() {
-                    (true, state.identity.clone())
-                } else {
-                    (false, None)
-                }
-            };
-
-            if should_reconnect {
-                if let Some(i) = identity {
-                    debug!("Реконнект внутри send_frame...");
-                    this.connect(i, true).await?;
-                } else {
-                    return Err(Error::ConnectionFailed("Device ID not set".to_string()));
-                }
-            }*/
-
             let mut state = this.state.lock().await;
             if let Some(writer) = &mut state.writer {
                 writer.send(request).await
@@ -360,9 +339,9 @@ impl MaxClient {
                 }
             }
             Ok(Ok(Err(e))) => Err(e),
-            Ok(Err(e)) => {
+            Ok(Err(_)) => {
                 error!("Ошибка получения ответа (канал закрыт) для seq: {}", request.seq);
-                Err(e.into())
+                Err(Error::ConnectionClosed("Соединение закрыто".to_string()))
             }
             Err(_) => {
                 warn!("Таймаут запроса для seq: {}", request.seq);
@@ -433,7 +412,13 @@ impl MaxClient {
                         }
                     }
                 }
-                _ = shutdown_rx.recv() => break,
+                _ = shutdown_rx.recv() => {
+                    let mut pending_guard = pending.lock().unwrap();
+                    for (_, sender) in pending_guard.drain() {
+                        let _ = sender.send(Err(Error::ConnectionClosed("Соединение закрыто".to_string())));
+                    }
+                    break;
+                }
             }
         }
     }
