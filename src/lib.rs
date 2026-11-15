@@ -33,7 +33,8 @@ use transport::{
 use fingerprint::{VersionDataProvider};
 use constants::Constants;
 pub use errors::{ClientResult, Error};
-use models::{Request, Response, Identity};
+use models::{Request, Response};
+pub use models::{Identity, UserAgent};
 
 pub use api::telemetry::TelemetryChat;
 use navigation::NavigationPlanner;
@@ -43,7 +44,8 @@ pub use api::auth::{SyncState, QrLoginSession};
 pub const MINTSIFRY_ROOT_CA: &[u8] = include_bytes!("../assets/rootca_ssl_rsa2022.crt");
 
 pub fn http_client_builder() -> reqwest::ClientBuilder {
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder()
+        .user_agent(Constants::WEB_USER_AGENT);
     if let Ok(cert) = reqwest::Certificate::from_pem(MINTSIFRY_ROOT_CA) {
         builder = builder.add_root_certificate(cert);
     }
@@ -84,6 +86,8 @@ struct ClientState {
     telemetry_chats: Vec<TelemetryChat>,
     telemetry_mode: String,
     interactive: bool,
+    is_mobile: bool,
+    custom_http_user_agent: Option<String>,
 }
 
 pub enum ClientMode {
@@ -125,6 +129,8 @@ impl MaxClient {
                 telemetry_chats: Vec::new(),
                 telemetry_mode: "fake".to_string(),
                 interactive: true,
+                is_mobile: true,
+                custom_http_user_agent: None,
             })),
             event_tx,
         }
@@ -169,6 +175,45 @@ impl MaxClient {
     pub async fn enable_custom_ca(&self, enabled: bool) {
         self.state.lock().await.use_custom_ca = enabled;
     }
+
+    pub async fn set_custom_http_user_agent(&self, ua: Option<String>) {
+        self.state.lock().await.custom_http_user_agent = ua;
+    }
+
+    pub async fn get_custom_http_user_agent(&self) -> Option<String> {
+        self.state.lock().await.custom_http_user_agent.clone()
+    }
+
+    pub async fn set_user_agent(&self, ua: UserAgent) {
+        let mut state = self.state.lock().await;
+        if let Some(ref mut identity) = state.identity {
+            identity.user_agent = ua;
+        }
+    }
+
+    pub async fn get_user_agent(&self) -> Option<UserAgent> {
+        self.state.lock().await.identity.as_ref().map(|id| id.user_agent.clone())
+    }
+
+    pub async fn get_effective_http_user_agent(&self) -> String {
+        let state = self.state.lock().await;
+        if let Some(ref custom) = state.custom_http_user_agent {
+            return custom.clone();
+        }
+        if state.is_mobile {
+            if let Some(ref id) = state.identity {
+                return id.user_agent.to_http_user_agent();
+            }
+            Constants::MOBILE_HTTP_USER_AGENT.to_string()
+        } else {
+            if let Some(ref id) = state.identity {
+                if let Some(ref hua) = id.user_agent.header_user_agent {
+                    return hua.clone();
+                }
+            }
+            Constants::WEB_USER_AGENT.to_string()
+        }
+    }
     
     pub async fn connect(&self, identity: Identity, is_mobile: bool) -> ClientResult<Response> {
         let _ = ring::default_provider().install_default();
@@ -177,6 +222,7 @@ impl MaxClient {
         let mut state_lock = state_clone.lock().await;
 
         state_lock.identity = Some(identity.clone());
+        state_lock.is_mobile = is_mobile;
 
         let (writer, reader): (Box<dyn TransportWriter>, Box<dyn TransportReader>) = if is_mobile {
             info!("Подключение Mobile TCP/TLS...");
@@ -192,9 +238,11 @@ impl MaxClient {
             (Box::new(w), Box::new(r))
         } else {
             info!("Подключение к WebSocket...");
+            let custom_ua = state_lock.custom_http_user_agent.clone();
+            let ws_ua = custom_ua.as_deref().unwrap_or(Constants::WEB_USER_AGENT);
             let req_builder = HttpRequestBuilder::new()
                 .header("Origin", HeaderValue::from_static(Constants::ORIGIN_HEADER))
-                .header("User-Agent", HeaderValue::from_static(Constants::USER_AGENT));
+                .header("User-Agent", HeaderValue::from_str(ws_ua).unwrap_or_else(|_| HeaderValue::from_static(Constants::WEB_USER_AGENT)));
 
             let ws = WebSocket::connect(Constants::WEBSOCKET_URI.parse().unwrap())
                 .with_options(Options::default().with_compression_level(CompressionLevel::fast()))

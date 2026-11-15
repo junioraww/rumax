@@ -4,18 +4,7 @@ use std::fs;
 use log::{info, error, debug};
 use std::sync::Arc;
 
-mod identity;
-use identity::generate_device;
-
 const DEVICE_ID_FILE: &str = ".device.id";
-
-fn read_line(prompt: &str) -> String {
-    print!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
-}
 
 fn get_device() -> Identity {
     if let Ok(content) = fs::read_to_string(DEVICE_ID_FILE) {
@@ -26,7 +15,7 @@ fn get_device() -> Identity {
     }
 
     info!("Генерируем новые данные устройства...");
-    let identity = generate_device();
+    let identity = Identity::generate_mobile();
 
     let content = serde_json::to_string_pretty(&identity).unwrap();
     fs::write(DEVICE_ID_FILE, content).expect("Не удалось сохранить данные устройства");

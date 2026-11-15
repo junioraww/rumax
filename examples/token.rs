@@ -5,9 +5,6 @@ use std::fs;
 use std::sync::Arc;
 use log::{info, error, warn};
 
-mod identity;
-use identity::generate_device;
-
 const DEVICE_ID_FILE: &str = ".device.id";
 const TOKEN_FILE: &str = ".session.token";
 
@@ -99,7 +96,7 @@ fn get_device() -> Identity {
     }
 
     info!("Создаем новую identity устройства...");
-    let identity = generate_device();
+    let identity = Identity::generate_mobile();
 
     let content = serde_json::to_string(&identity).unwrap();
     fs::write(DEVICE_ID_FILE, content).expect("Не удалось записать .device.id");

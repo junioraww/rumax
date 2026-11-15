@@ -122,8 +122,14 @@ impl MaxClient {
             .unwrap(),
         );
 
+        let ua = self.get_effective_http_user_agent().await;
         let client = crate::create_http_client();
-        let response = match client.post(upload_url).multipart(form).send().await {
+        let response = match client.post(upload_url)
+            .header("User-Agent", ua)
+            .header("Connection", "keep-alive")
+            .multipart(form)
+            .send()
+            .await {
             Ok(r) => r,
             Err(e) => return json!({ "error": format!("Upload request failed: {}", e) }),
         };
@@ -179,12 +185,14 @@ impl MaxClient {
         let stream = ReaderStream::new(file);
         let body = Body::wrap_stream(stream);
 
+        let ua = self.get_effective_http_user_agent().await;
         let response = match client.post(upload_url)
+        .header("User-Agent", ua)
         .header("Content-Type", "application/octet-stream")
         .header("Content-Disposition", format!("attachment; filename=\"{}\"", effective_filename))
         .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
         .header("Content-Length", file_size.to_string())
-        .header("Connection", "close")
+        .header("Connection", "keep-alive")
         .body(body)
         .send()
         .await
@@ -253,11 +261,15 @@ impl MaxClient {
             Err(e) => return json!({ "error": format!("Client build failed: {}", e) }),
         };
 
+        let ua = self.get_effective_http_user_agent().await;
         let response = match client
             .post(upload_url)
-            .header("Content-Disposition", format!("attachment; filename={}", file_name))
-            .header("Content-Length", file_size)
-            .header("Content-Range", format!("0-{}/{}", file_size - 1, file_size))
+            .header("User-Agent", ua)
+            .header("Content-Type", "application/octet-stream")
+            .header("Content-Disposition", format!("attachment; filename=\"{}\"", file_name))
+            .header("Content-Length", file_size.to_string())
+            .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
+            .header("Connection", "keep-alive")
             .body(body)
             .send()
             .await

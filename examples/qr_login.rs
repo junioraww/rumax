@@ -3,9 +3,6 @@ use std::fs;
 use std::sync::Arc;
 use log::{error, info};
 
-mod identity;
-use identity::generate_web_device;
-
 const DEVICE_ID_FILE: &str = ".device.web.id";
 const TOKEN_FILE: &str = ".session.token";
 
@@ -37,7 +34,7 @@ fn get_device() -> Identity {
     }
 
     info!("Generating new WEB device identity...");
-    let identity = generate_web_device();
+    let identity = Identity::generate_web();
 
     let content = serde_json::to_string_pretty(&identity).unwrap();
     fs::write(DEVICE_ID_FILE, content).expect("Не удалось сохранить данные устройства");
