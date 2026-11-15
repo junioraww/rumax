@@ -32,6 +32,7 @@ impl VersionDataProvider {
             cache: Arc::new(RwLock::new(initial_cache)),
             http_client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
+            .user_agent(crate::constants::Constants::OKHTTP_USER_AGENT)
             .build()
             .unwrap(),
             local_path: "./assets/mobile_versions.json".to_string(),

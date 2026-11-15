@@ -4,9 +4,6 @@ use std::fs;
 use log::{info, error, debug};
 use std::sync::Arc;
 
-mod identity;
-use identity::generate_device;
-
 const DEVICE_ID_FILE: &str = ".device.id";
 
 fn read_line(prompt: &str) -> String {
@@ -25,7 +22,7 @@ fn get_device() -> Identity {
         }
     }
 
-    let identity = generate_device();
+    let identity = Identity::generate_mobile();
 
     let content = serde_json::to_string_pretty(&identity).unwrap();
     fs::write(DEVICE_ID_FILE, content).expect("");
