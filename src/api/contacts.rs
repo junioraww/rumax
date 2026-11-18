@@ -55,7 +55,7 @@ impl MaxClient {
 
     pub async fn get_contact_photos(
         &self,
-        contact_id: u64,
+        contact_id: i64,
         from: i64,
         count: i64,
     ) -> ClientResult<Response> {
