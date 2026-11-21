@@ -19,6 +19,8 @@ use serde_json::{Map, Value as JsonValue};
 use rmpv::{Value as MsgPackValue};
 use rmpv::decode::read_value;
 
+use super::proxy::ProxyConfig;
+
 pub enum MobileStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),
@@ -123,11 +125,10 @@ impl MobileTransport {
         host: &str,
         port: u16,
         use_custom_ca: bool,
-        custom_cert_path: Option<&str>
+        custom_cert_path: Option<&str>,
+        proxy: Option<&ProxyConfig>,
     ) -> ClientResult<Self> {
-        let addr = format!("{}:{}", host, port);
-        let tcp = TcpStream::connect(&addr).await
-            .map_err(|e| Error::ConnectionFailed(format!("TCP Error: {}", e)))?;
+        let tcp = super::proxy::open_proxied_stream(proxy, host, port).await?;
         tcp.set_nodelay(true).ok();
 
         let config = create_tls_config(use_custom_ca, custom_cert_path)

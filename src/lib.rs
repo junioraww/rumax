@@ -40,14 +40,53 @@ pub use api::telemetry::TelemetryChat;
 use navigation::NavigationPlanner;
 
 pub use api::auth::{SyncState, QrLoginSession};
+pub use transport::proxy::{ProxyConfig, ProxyProtocol};
 
 pub const MINTSIFRY_ROOT_CA: &[u8] = include_bytes!("../assets/rootca_ssl_rsa2022.crt");
+
+static GLOBAL_PROXY: std::sync::RwLock<Option<ProxyConfig>> = std::sync::RwLock::new(None);
+static SHARED_HTTP_CLIENT: std::sync::RwLock<Option<reqwest::Client>> = std::sync::RwLock::new(None);
+
+pub fn set_global_proxy_config(settings: Option<ProxyConfig>) {
+    if let Ok(mut lock) = GLOBAL_PROXY.write() {
+        *lock = settings;
+    }
+    reset_shared_http_client();
+}
+
+pub fn set_global_proxy(settings: Option<ProxyConfig>) {
+    set_global_proxy_config(settings);
+}
+
+pub fn get_global_proxy_config() -> Option<ProxyConfig> {
+    GLOBAL_PROXY.read().ok().and_then(|lock| lock.clone())
+}
+
+pub fn get_global_proxy() -> Option<ProxyConfig> {
+    get_global_proxy_config()
+}
+
+pub fn reset_shared_http_client() {
+    if let Ok(mut lock) = SHARED_HTTP_CLIENT.write() {
+        *lock = None;
+    }
+}
 
 pub fn http_client_builder() -> reqwest::ClientBuilder {
     let mut builder = reqwest::Client::builder()
         .user_agent(Constants::WEB_USER_AGENT);
     if let Ok(cert) = reqwest::Certificate::from_pem(MINTSIFRY_ROOT_CA) {
         builder = builder.add_root_certificate(cert);
+    }
+    if let Some(proxy_cfg) = get_global_proxy_config() {
+        if let Some(url_str) = proxy_cfg.to_connection_uri() {
+            if let Ok(mut proxy) = reqwest::Proxy::all(&url_str) {
+                if !proxy_cfg.proxy_maxplus_site {
+                    proxy = proxy.no_proxy(reqwest::NoProxy::from_string("maxplus.dev,*.maxplus.dev,localhost,127.0.0.1"));
+                }
+                builder = builder.proxy(proxy);
+            }
+        }
     }
     builder
 }
@@ -56,10 +95,17 @@ pub fn create_http_client() -> reqwest::Client {
     http_client_builder().build().unwrap_or_else(|_| reqwest::Client::new())
 }
 
-static SHARED_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-
-pub fn shared_http_client() -> &'static reqwest::Client {
-    SHARED_HTTP_CLIENT.get_or_init(create_http_client)
+pub fn shared_http_client() -> reqwest::Client {
+    if let Ok(lock) = SHARED_HTTP_CLIENT.read() {
+        if let Some(ref client) = *lock {
+            return client.clone();
+        }
+    }
+    let new_client = create_http_client();
+    if let Ok(mut lock) = SHARED_HTTP_CLIENT.write() {
+        *lock = Some(new_client.clone());
+    }
+    new_client
 }
 
 struct ClientState {
@@ -88,6 +134,8 @@ struct ClientState {
     interactive: bool,
     is_mobile: bool,
     custom_http_user_agent: Option<String>,
+    proxy: Option<ProxyConfig>,
+    is_vpn: Option<bool>,
 }
 
 pub enum ClientMode {
@@ -131,9 +179,25 @@ impl MaxClient {
                 interactive: true,
                 is_mobile: true,
                 custom_http_user_agent: None,
+                proxy: None,
+                is_vpn: None,
             })),
             event_tx,
         }
+    }
+
+    pub async fn set_proxy(&self, proxy: Option<ProxyConfig>) {
+        let mut state = self.state.lock().await;
+        state.proxy = proxy.clone();
+        set_global_proxy_config(proxy);
+    }
+
+    pub async fn get_proxy(&self) -> Option<ProxyConfig> {
+        self.state.lock().await.proxy.clone().or_else(get_global_proxy_config)
+    }
+
+    pub async fn is_vpn(&self) -> bool {
+        self.state.lock().await.is_vpn.unwrap_or(false)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
@@ -224,6 +288,8 @@ impl MaxClient {
         state_lock.identity = Some(identity.clone());
         state_lock.is_mobile = is_mobile;
 
+        let proxy = state_lock.proxy.clone().or_else(get_global_proxy_config);
+
         let (writer, reader): (Box<dyn TransportWriter>, Box<dyn TransportReader>) = if is_mobile {
             info!("Подключение Mobile TCP/TLS...");
 
@@ -231,7 +297,8 @@ impl MaxClient {
                 &state_lock.mobile_host,
                 state_lock.mobile_port,
                 state_lock.use_custom_ca,
-                state_lock.custom_ca_path.as_deref()
+                state_lock.custom_ca_path.as_deref(),
+                proxy.as_ref(),
             ).await?;
 
             let (w, r) = transport.split();
@@ -303,6 +370,10 @@ impl MaxClient {
         }) {
             debug!("Получен calls_seed: {}", seed);
             self.state.lock().await.calls_seed = Some(seed);
+        }
+
+        if let Some(is_vpn) = handshake_response.payload.get("isVpn").and_then(|v| v.as_bool()) {
+            self.state.lock().await.is_vpn = Some(is_vpn);
         }
 
         Ok(handshake_response)
