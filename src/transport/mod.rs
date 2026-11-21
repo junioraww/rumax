@@ -1,4 +1,5 @@
 pub mod mobile;
+pub mod proxy;
 pub mod web;
 
 use crate::models::{Request, Response};
