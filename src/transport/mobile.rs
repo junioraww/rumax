@@ -126,16 +126,43 @@ impl MobileTransport {
         port: u16,
         use_custom_ca: bool,
         custom_cert_path: Option<&str>,
+    ) -> ClientResult<Self> {
+        Self::connect_tls_with_proxy(host, port, use_custom_ca, custom_cert_path, None).await
+    }
+
+    pub async fn connect_tls_with_proxy(
+        host: &str,
+        port: u16,
+        use_custom_ca: bool,
+        custom_cert_path: Option<&str>,
         proxy: Option<&ProxyConfig>,
     ) -> ClientResult<Self> {
-        let tcp = super::proxy::open_proxied_stream(proxy, host, port).await?;
+        let clean_host = host.trim();
+        let net_host = if let Ok(std::net::IpAddr::V6(v6)) = clean_host.trim_start_matches('[').trim_end_matches(']').parse() {
+            format!("[{}]", v6)
+        } else {
+            clean_host.to_string()
+        };
+
+        let tcp = super::proxy::open_proxied_stream(proxy, &net_host, port).await?;
         tcp.set_nodelay(true).ok();
 
-        let config = create_tls_config(use_custom_ca, custom_cert_path)
-            .map_err(|e| Error::ConnectionFailed(format!("TLS config error: {}", e)))?;
+        let cert_path = custom_cert_path.map(|s| s.to_string());
+        let config = tokio::task::spawn_blocking(move || {
+            create_tls_config(use_custom_ca, cert_path.as_deref())
+        })
+        .await
+        .map_err(|e| Error::ConnectionFailed(format!("TLS config task error: {}", e)))?
+        .map_err(|e| Error::ConnectionFailed(format!("TLS config error: {}", e)))?;
 
         let connector = TlsConnector::from(Arc::new(config));
-        let domain = ServerName::try_from(host.to_string())
+        let tls_domain_str = if clean_host.starts_with('[') && clean_host.ends_with(']') && clean_host.len() >= 2 {
+            &clean_host[1..clean_host.len() - 1]
+        } else {
+            clean_host
+        };
+
+        let domain = ServerName::try_from(tls_domain_str.to_string())
             .map_err(|_| Error::ConnectionFailed("Invalid DNS name".into()))?;
 
         let tls_stream = connector.connect(domain, tcp).await
@@ -145,7 +172,7 @@ impl MobileTransport {
     }
 }
 
-fn create_tls_config(use_custom_ca: bool, cert_path: Option<&str>) -> Result<ClientConfig, String> {
+pub(crate) fn create_tls_config(use_custom_ca: bool, cert_path: Option<&str>) -> Result<ClientConfig, String> {
     let mut root_store = RootCertStore::empty();
 
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());

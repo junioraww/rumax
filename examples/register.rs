@@ -6,6 +6,14 @@ use std::sync::Arc;
 
 const DEVICE_ID_FILE: &str = ".device.id";
 
+fn read_line(prompt: &str) -> String {
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
+}
+
 fn get_device() -> Identity {
     if let Ok(content) = fs::read_to_string(DEVICE_ID_FILE) {
         if let Ok(identity) = serde_json::from_str::<Identity>(&content) {

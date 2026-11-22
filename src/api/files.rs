@@ -122,10 +122,8 @@ impl MaxClient {
             .unwrap(),
         );
 
-        let ua = self.get_effective_http_user_agent().await;
-        let client = crate::create_http_client();
+        let client = self.http_client().await;
         let response = match client.post(upload_url)
-            .header("User-Agent", ua)
             .header("Connection", "keep-alive")
             .multipart(form)
             .send()
@@ -173,21 +171,14 @@ impl MaxClient {
             return json!({ "error": "Empty file" });
         }
 
-        let client = match crate::http_client_builder()
-        .timeout(Duration::from_secs(600))
-        .build()
-        {
-            Ok(c) => c,
-            Err(e) => return json!({ "error": format!("Failed to build client: {}", e) }),
-        };
+        let client = self.http_client().await;
 
         let effective_filename = (chrono::Utc::now().timestamp_micros() & 0x7FFF_FFFF).to_string();
         let stream = ReaderStream::new(file);
         let body = Body::wrap_stream(stream);
 
-        let ua = self.get_effective_http_user_agent().await;
         let response = match client.post(upload_url)
-        .header("User-Agent", ua)
+        .timeout(Duration::from_secs(600))
         .header("Content-Type", "application/octet-stream")
         .header("Content-Disposition", format!("attachment; filename=\"{}\"", effective_filename))
         .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
@@ -256,15 +247,10 @@ impl MaxClient {
         let stream = ReaderStream::new(file);
         let body = Body::wrap_stream(stream);
 
-        let client = match crate::http_client_builder().build() {
-            Ok(c) => c,
-            Err(e) => return json!({ "error": format!("Client build failed: {}", e) }),
-        };
+        let client = self.http_client().await;
 
-        let ua = self.get_effective_http_user_agent().await;
         let response = match client
             .post(upload_url)
-            .header("User-Agent", ua)
             .header("Content-Type", "application/octet-stream")
             .header("Content-Disposition", format!("attachment; filename=\"{}\"", file_name))
             .header("Content-Length", file_size.to_string())
