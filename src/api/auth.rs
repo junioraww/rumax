@@ -74,7 +74,7 @@ impl MaxClient {
         })?;
 
         let app_ver = if identity.user_agent.app_version.is_empty() {
-            "26.31.0"
+            "26.42.0"
         } else {
             &identity.user_agent.app_version
         };
