@@ -28,6 +28,22 @@ impl MaxClient {
         self.send_and_wait(78, payload, 0).await
     }
 
+    pub async fn start_group_call(
+        &self,
+        chat_id: i64,
+        is_video: bool,
+        conversation_id: String,
+        internal_params: String,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "conversationId": conversation_id,
+            "chatId": chat_id,
+            "internalParams": internal_params,
+            "isVideo": is_video,
+        });
+        self.send_and_wait(78, payload, 0).await
+    }
+
     pub async fn open_conference(
         &self,
         conversation_id: String,

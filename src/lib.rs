@@ -658,8 +658,6 @@ impl MaxClient {
             }
         };
 
-        // Ожидание блокировки writer с таймаутом. Если истекает здесь, байты в поток
-        // ещё не отправлялись, и поток не повреждён.
         let mut writer_guard = match timeout(Constants::DEFAULT_TIMEOUT, writer_arc.lock()).await {
             Ok(guard) => guard,
             Err(_) => {
@@ -675,8 +673,6 @@ impl MaxClient {
             }
         }
 
-        // Непосредственная отправка фрейма. Если передача прерывается таймаутом или ошибкой ввода-вывода (не ошибкой сериализации/размера),
-        // в сокет могли попасть частичные байты, поэтому соединение необходимо разорвать во избежание повреждения протокола.
         match timeout(Constants::DEFAULT_TIMEOUT, writer_guard.send(request)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
