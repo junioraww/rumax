@@ -129,15 +129,12 @@ impl MaxClient {
         let mut opts = Map::new();
         if let Some(c) = comments {
             opts.insert("COMMENTS".into(), json!(c));
-            opts.insert("comments".into(), json!(c));
         }
         if let Some(s) = signatures {
-            opts.insert("SIGNATURES".into(), json!(s));
-            opts.insert("signatures".into(), json!(s));
+            opts.insert("SIGN_ADMIN".into(), json!(s));
         }
         if let Some(j) = join_request {
             opts.insert("JOIN_REQUEST".into(), json!(j));
-            opts.insert("joinRequest".into(), json!(j));
         }
         let payload = json!({
             "chatId": chat_id,
