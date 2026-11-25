@@ -124,12 +124,6 @@ impl ProxyConfig {
             if p_trimmed == "*" {
                 return true;
             }
-            if p_trimmed.contains(',') {
-                if target == p_trimmed.to_lowercase() {
-                    return true;
-                }
-                continue;
-            }
             let Some(p_final) = normalize_bypass_pattern(p_trimmed) else {
                 continue;
             };
@@ -397,6 +391,13 @@ async fn connect_http_connect(
             )));
         }
 
+        if response_buf.len() > end_pos + 4 {
+            log::warn!(
+                "HTTP proxy sent {} unexpected trailing bytes after CONNECT response",
+                response_buf.len() - (end_pos + 4)
+            );
+        }
+
         break;
     }
 
@@ -422,7 +423,7 @@ async fn connect_socks5(
         .unwrap_or(false);
 
     if has_auth {
-        stream.write_all(&[0x05, 0x02, 0x00, 0x02]).await
+        stream.write_all(&[0x05, 0x01, 0x02]).await
     } else {
         stream.write_all(&[0x05, 0x01, 0x00]).await
     }
@@ -438,9 +439,9 @@ async fn connect_socks5(
         return Err(Error::ConnectionFailed("Invalid SOCKS version".into()));
     }
 
-    match method_buf[1] {
-        0x00 => {}
-        0x02 => {
+    match (has_auth, method_buf[1]) {
+        (false, 0x00) => {}
+        (true, 0x02) => {
             let user = proxy.username.as_deref().unwrap_or("");
             let pass = proxy.password.as_deref().unwrap_or("");
             if user.is_empty() || user.len() > 255 || pass.len() > 255 {
@@ -473,8 +474,8 @@ async fn connect_socks5(
                 )));
             }
         }
-        0xFF => return Err(Error::ConnectionFailed("SOCKS5 no acceptable authentication methods".into())),
-        other => return Err(Error::ConnectionFailed(format!("Unsupported SOCKS5 method: {:#x}", other))),
+        (_, 0xFF) => return Err(Error::ConnectionFailed("SOCKS5 no acceptable authentication methods".into())),
+        (_, other) => return Err(Error::ConnectionFailed(format!("Unsupported or unoffered SOCKS5 method: {:#x}", other))),
     }
 
     let clean_host = target_host.trim().trim_start_matches('[').trim_end_matches(']');

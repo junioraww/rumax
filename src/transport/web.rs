@@ -1,3 +1,4 @@
+use super::mobile::{decode_binary_frame, encode_binary_frame};
 use super::{TransportFactory, TransportReader, TransportWriter};
 use crate::models::{Request, Response};
 use crate::errors::{ClientResult, Error};
@@ -8,7 +9,7 @@ use futures_util::{
     SinkExt, StreamExt,
 };
 use log::{trace, warn};
-use yawc::{FrameView, WebSocket};
+use yawc::{FrameView, OpCode, WebSocket};
 
 pub struct WebTransport {
     ws: WebSocket,
@@ -37,13 +38,12 @@ pub struct WebWriter {
 #[async_trait]
 impl TransportWriter for WebWriter {
     async fn send(&mut self, request: Request) -> ClientResult<()> {
-        let json = serde_json::to_string(&request)
-            .map_err(|e| Error::SendFailed(format!("JSON serialization error: {}", e)))?;
+        let buffer = encode_binary_frame(&request)?;
 
-        trace!("WEB Send (seq: {}): {}", request.seq, json);
+        trace!("WEB Send binary (seq: {}, bytes: {})", request.seq, buffer.len());
 
         self.writer
-            .send(FrameView::text(json))
+            .send(FrameView::binary(buffer.freeze()))
             .await
             .map_err(|e| Error::SendFailed(e.to_string()))?;
 
@@ -58,19 +58,28 @@ pub struct WebReader {
 #[async_trait]
 impl TransportReader for WebReader {
     async fn next_message(&mut self) -> ClientResult<Option<Response>> {
-        match self.reader.next().await {
-            Some(frame) => {
-                let body_bytes = &frame.payload;
-                match serde_json::from_slice::<Response>(body_bytes) {
-                    Ok(resp) => Ok(Some(resp)),
-                    Err(e) => {
-                        let body_str = String::from_utf8_lossy(body_bytes);
-                        warn!("JSON Error: {} | Body: {}", e, body_str);
-                        Err(Error::ApiResponse(serde_json::json!({"error": e.to_string()})))
+        loop {
+            match self.reader.next().await {
+                Some(frame) => match frame.opcode {
+                    OpCode::Close => return Ok(None),
+                    OpCode::Binary => {
+                        return decode_binary_frame(&frame.payload).map(Some);
                     }
-                }
+                    OpCode::Text => {
+                        let body_bytes = &frame.payload;
+                        match serde_json::from_slice::<Response>(body_bytes) {
+                            Ok(resp) => return Ok(Some(resp)),
+                            Err(e) => {
+                                let body_str = String::from_utf8_lossy(body_bytes);
+                                warn!("JSON Error: {} | Body: {}", e, body_str);
+                                return Err(Error::ApiResponse(serde_json::json!({"error": e.to_string()})));
+                            }
+                        }
+                    }
+                    _ => continue,
+                },
+                None => return Ok(None),
             }
-            None => Ok(None),
         }
     }
 }
