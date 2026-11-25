@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 use rand::seq::SliceRandom;
 
 const APP_VERSIONS: &[(&str, i32)] = &[
-    ("26.25.0", 6790), ("26.26.0", 6797), ("26.26.1", 6798),
-    ("26.27.0", 6800), ("26.27.1", 6802), ("26.28.0", 6804),
-    ("26.29.0", 6807), ("26.29.1", 6808), ("26.30.0", 6810),
-    ("26.30.1", 6819), ("26.31.0", 6822),
+    ("26.31.0", 6822), ("26.32.0", 6828), ("26.32.1", 6831),
+    ("26.33.0", 6835), ("26.33.1", 6840), ("26.34.0", 6850),
+    ("26.34.1", 6856), ("26.35.0", 6861), ("26.35.1", 6867),
+    ("26.36.2", 6879), ("26.37.0", 6886), ("26.37.1", 6900),
+    ("26.38.0", 6902), ("26.38.1", 6907), ("26.38.2", 6911),
+    ("26.39.0", 6915), ("26.40.0", 6925), ("26.40.1", 6928),
+    ("26.41.0", 6931), ("26.42.0", 6936),
 ];
 
 const ANDROID_DEVICES: &[(&str, &str, &str, &str)] = &[
@@ -165,7 +168,7 @@ pub struct UserAgent {
 impl UserAgent {
     pub fn generate_mobile() -> Self {
         let mut rng = rand::thread_rng();
-        let app = APP_VERSIONS.choose(&mut rng).unwrap_or(&("26.31.0", 6822));
+        let app = APP_VERSIONS.choose(&mut rng).unwrap_or(&("26.42.0", 6936));
         let dev = ANDROID_DEVICES.choose(&mut rng).unwrap_or(&("Samsung SM-S928B", "Android 14", "xxhdpi 450dpi 1440x3120", "arm64-v8a"));
         let loc = LOCALE_TIMEZONES.choose(&mut rng).unwrap_or(&("ru", "Europe/Moscow"));
 
@@ -226,14 +229,14 @@ impl UserAgent {
     pub fn default_mobile() -> Self {
         Self {
             device_type: "ANDROID".to_string(),
-            app_version: "26.31.0".to_string(),
+            app_version: "26.42.0".to_string(),
             os_version: "Android 14".to_string(),
             timezone: "Europe/Moscow".to_string(),
             screen: "xxhdpi 450dpi 1440x3120".to_string(),
             push_device_type: Some("GCM".to_string()),
             arch: Some("arm64-v8a".to_string()),
             locale: "ru".to_string(),
-            build_number: 6822,
+            build_number: 6936,
             device_name: "Samsung SM-S928B".to_string(),
             device_locale: "ru".to_string(),
             release: None,
