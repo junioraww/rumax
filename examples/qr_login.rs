@@ -115,6 +115,14 @@ async fn main() {
                 }
             }
         }
-        Err(e) => error!("QR authorization failed: {}", e),
+        Err(e) => {
+            if let Some(token) = client.get_token().await {
+                match fs::write(TOKEN_FILE, token) {
+                    Ok(_) => info!("Token saved to {} (despite sync error)", TOKEN_FILE),
+                    Err(err) => error!("Failed to save token to {}: {}", TOKEN_FILE, err),
+                }
+            }
+            error!("QR authorization failed: {}", e);
+        }
     }
 }
