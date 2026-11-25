@@ -112,7 +112,7 @@ impl MaxClient {
                 state.identity.clone(),
                 state.calls_seed,
                 state.version_provider.clone(),
-                state.writer.is_some(),
+                state.writer_tx.is_some() && !state.is_closed,
             )
         };
 
@@ -171,25 +171,7 @@ impl MaxClient {
         let resp = self.send_and_wait(18, payload, 0).await?;
         
         log::debug!("check_code response {:?}", resp);
-        
-        if let Some(token_attrs) = resp.payload.get("tokenAttrs").and_then(|t| t.as_object()) {
-            for (token_type, value) in token_attrs {
-                if let Some(token) = value.get("token").and_then(|t| t.as_str()) {
-                    match token_type.as_str() {
-                        "REGISTER" => {
-                            self.set_temp_token(token.to_string()).await;
-                        }
-                        "LOGIN" => {
-                            self.set_token(token.to_string()).await;
-                        }
-                        _ => {
-                            eprintln!("Unknown token type: {}", token_type);
-                        }
-                    }
-                }
-            }
-        }
-        
+        self.update_tokens_from_payload(&resp.payload).await;
         Ok(resp)
     }
 
@@ -202,22 +184,7 @@ impl MaxClient {
         let resp = self.send_and_wait(115, payload, 0).await?;
 
         log::debug!("check_password response {:?}", resp);
-
-        if let Some(token_attrs) = resp.payload.get("tokenAttrs").and_then(|t| t.as_object()) {
-            for (token_type, value) in token_attrs {
-                if let Some(token) = value.get("token").and_then(|t| t.as_str()) {
-                    match token_type.as_str() {
-                        "LOGIN" => {
-                            self.set_token(token.to_string()).await;
-                        }
-                        _ => {
-                            eprintln!("Unknown token type in check_password: {}", token_type);
-                        }
-                    }
-                }
-            }
-        }
-
+        self.update_tokens_from_payload(&resp.payload).await;
         Ok(resp)
     }
 
@@ -567,7 +534,7 @@ impl MaxClient {
                 "QR: 2FA password required; call check_password with challenge trackId: {:?}",
                 challenge.get("trackId")
             );
-            return Err(Error::ApiResponse(resp.payload));
+            return Err(Error::PasswordRequired(resp.payload));
         }
 
         warn!("QR: no login token in LOGIN_BY_QR response");

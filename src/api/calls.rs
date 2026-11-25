@@ -35,12 +35,26 @@ impl MaxClient {
         conversation_id: String,
         internal_params: String,
     ) -> ClientResult<Response> {
-        let payload = json!({
+        self.start_group_call_with_callees(chat_id, is_video, conversation_id, internal_params, Vec::new()).await
+    }
+
+    pub async fn start_group_call_with_callees(
+        &self,
+        chat_id: i64,
+        is_video: bool,
+        conversation_id: String,
+        internal_params: String,
+        callee_ids: Vec<u64>,
+    ) -> ClientResult<Response> {
+        let mut payload = json!({
             "conversationId": conversation_id,
             "chatId": chat_id,
             "internalParams": internal_params,
             "isVideo": is_video,
         });
+        if !callee_ids.is_empty() {
+            payload["calleeIds"] = json!(callee_ids);
+        }
         self.send_and_wait(78, payload, 0).await
     }
 

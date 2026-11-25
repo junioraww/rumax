@@ -145,7 +145,6 @@ impl MobileTransport {
         };
 
         let tcp = super::proxy::open_proxied_stream(proxy, &net_host, port).await?;
-        tcp.set_nodelay(true).ok();
 
         let cert_path = custom_cert_path.map(|s| s.to_string());
         let config = tokio::task::spawn_blocking(move || {

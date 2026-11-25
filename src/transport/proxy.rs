@@ -124,12 +124,6 @@ impl ProxyConfig {
             if p_trimmed == "*" {
                 return true;
             }
-            if p_trimmed.contains(',') {
-                if target == p_trimmed.to_lowercase() {
-                    return true;
-                }
-                continue;
-            }
             let Some(p_final) = normalize_bypass_pattern(p_trimmed) else {
                 continue;
             };
@@ -397,6 +391,13 @@ async fn connect_http_connect(
             )));
         }
 
+        if response_buf.len() > end_pos + 4 {
+            log::warn!(
+                "HTTP proxy sent {} unexpected trailing bytes after CONNECT response",
+                response_buf.len() - (end_pos + 4)
+            );
+        }
+
         break;
     }
 
@@ -422,7 +423,7 @@ async fn connect_socks5(
         .unwrap_or(false);
 
     if has_auth {
-        stream.write_all(&[0x05, 0x02, 0x00, 0x02]).await
+        stream.write_all(&[0x05, 0x01, 0x02]).await
     } else {
         stream.write_all(&[0x05, 0x01, 0x00]).await
     }

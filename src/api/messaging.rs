@@ -154,6 +154,49 @@ impl MaxClient {
         self.send_and_wait(55, payload, 0).await
     }
 
+    pub async fn get_pinned_message_states(
+        &self,
+        chat_ids: Vec<i64>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatIds": chat_ids,
+        });
+        self.send_and_wait(240, payload, 0).await
+    }
+
+    pub async fn get_pinned_messages(
+        &self,
+        chat_id: i64,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "chatId": chat_id,
+        });
+        self.send_and_wait(241, payload, 0).await
+    }
+
+    pub async fn update_pinned_messages(
+        &self,
+        chat_id: i64,
+        action: u8,
+        message_ids: Vec<u64>,
+        for_me: bool,
+        notify: bool,
+    ) -> ClientResult<Response> {
+        let mut map = serde_json::Map::new();
+        map.insert("chatId".into(), json!(chat_id));
+        map.insert("action".into(), json!(action));
+        if !message_ids.is_empty() {
+            map.insert("messageIds".into(), json!(message_ids));
+        }
+        if for_me {
+            map.insert("forMe".into(), json!(true));
+        }
+        if !notify {
+            map.insert("notify".into(), json!(false));
+        }
+        self.send_and_wait(242, Value::Object(map), 0).await
+    }
+
     pub async fn delete_message(
         &self,
         chat_id: i64,
