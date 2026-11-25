@@ -1,4 +1,4 @@
-use crate::{errors::ClientResult, MaxClient};
+use crate::{errors::{ClientResult, Error}, MaxClient};
 use chrono::Utc;
 use serde_json::{json, Map, Value};
 use crate::models::Response;
@@ -10,16 +10,21 @@ impl MaxClient {
         participant_ids: Option<Vec<i64>>,
         notify: Option<bool>,
     ) -> ClientResult<Response> {
+        let mut attach = Map::new();
+        attach.insert("_type".into(), json!("CONTROL"));
+        attach.insert("event".into(), json!("new"));
+        attach.insert("chatType".into(), json!("CHANNEL"));
+        attach.insert("title".into(), json!(title));
+        if let Some(ids) = participant_ids {
+            if !ids.is_empty() {
+                attach.insert("userIds".into(), json!(ids));
+            }
+        }
+
         let payload = json!({
             "message": {
                 "cid": Utc::now().timestamp_millis(),
-                "attaches": [{
-                    "_type": "CONTROL",
-                    "event": "new",
-                    "chatType": "CHANNEL",
-                    "title": title,
-                    "userIds": participant_ids.unwrap_or_default()
-                }]
+                "attaches": [Value::Object(attach)]
             },
             "notify": notify.unwrap_or(true)
         });
@@ -136,6 +141,9 @@ impl MaxClient {
         if let Some(j) = join_request {
             opts.insert("JOIN_REQUEST".into(), json!(j));
         }
+        if opts.is_empty() {
+            return Err(Error::Other("At least one channel option must be specified".into()));
+        }
         let payload = json!({
             "chatId": chat_id,
             "options": Value::Object(opts),
@@ -155,6 +163,7 @@ impl MaxClient {
         self.send_and_wait(55, payload, 0).await
     }
 
+    /// Note: `_alias` is kept for signature compatibility; the Max protocol has no alias field on `CHAT_MEMBERS_UPDATE`.
     pub async fn assign_channel_admin(
         &self,
         chat_id: i64,
@@ -162,12 +171,22 @@ impl MaxClient {
         permissions: i64,
         _alias: Option<String>,
     ) -> ClientResult<Response> {
+        self.assign_channel_admin_with_history(chat_id, user_id, permissions, true).await
+    }
+
+    pub async fn assign_channel_admin_with_history(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        permissions: i64,
+        show_history: bool,
+    ) -> ClientResult<Response> {
         let mut payload = Map::new();
         payload.insert("chatId".into(), json!(chat_id));
         payload.insert("operation".into(), json!("add"));
         payload.insert("members".into(), json!([{ "userId": user_id }]));
         payload.insert("type".into(), json!("ADMIN"));
-        payload.insert("showHistory".into(), json!(true));
+        payload.insert("showHistory".into(), json!(show_history));
         if permissions != 0 {
             payload.insert("permissions".into(), json!(permissions));
         }

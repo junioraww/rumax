@@ -145,7 +145,6 @@ impl MobileTransport {
         };
 
         let tcp = super::proxy::open_proxied_stream(proxy, &net_host, port).await?;
-        tcp.set_nodelay(true).ok();
 
         let cert_path = custom_cert_path.map(|s| s.to_string());
         let config = tokio::task::spawn_blocking(move || {
@@ -271,29 +270,116 @@ fn json_to_msgpack(val: &JsonValue) -> MsgPackValue {
     }
 }
 
+pub(crate) fn encode_binary_frame(request: &Request) -> ClientResult<BytesMut> {
+    let mp_payload = json_to_msgpack(&request.payload);
+
+    let mut payload_bytes = Vec::new();
+    rmpv::encode::write_value(&mut payload_bytes, &mp_payload)
+        .map_err(|e| Error::SendFailed(format!("MsgPack encode error: {}", e)))?;
+
+    let payload_len = payload_bytes.len();
+    if payload_len > 0xFFFFFF {
+        return Err(Error::SendFailed("Payload too large".into()));
+    }
+
+    let mut buffer = BytesMut::with_capacity(10 + payload_len);
+    buffer.put_u8(request.ver as u8);
+    buffer.put_u8(request.cmd as u8);
+    buffer.put_u16(request.seq as u16);
+    buffer.put_u16(request.opcode);
+
+    let packed_len = (payload_len as u32) & 0xFFFFFF;
+    buffer.put_u32(packed_len);
+    buffer.put_slice(&payload_bytes);
+
+    Ok(buffer)
+}
+
+pub(crate) fn decode_binary_payload(
+    ver: u8,
+    cmd: u8,
+    seq: u64,
+    opcode: u16,
+    comp_flag: u32,
+    payload_buf: &[u8],
+) -> ClientResult<Response> {
+    if payload_buf.is_empty() {
+        return Ok(Response {
+            ver,
+            cmd,
+            seq,
+            opcode,
+            payload: JsonValue::Null,
+        });
+    }
+
+    let decompressed;
+    let final_payload_bytes: &[u8] = if comp_flag != 0 {
+        let max_size = 5 * 1024 * 1024;
+        decompressed = lz4_flex::block::decompress(payload_buf, max_size)
+            .map_err(|e| Error::ApiResponse(serde_json::json!({"error": "LZ4 error", "details": e.to_string()})))?;
+        &decompressed
+    } else {
+        payload_buf
+    };
+
+    if final_payload_bytes.is_empty() {
+        return Ok(Response {
+            ver,
+            cmd,
+            seq,
+            opcode,
+            payload: JsonValue::Null,
+        });
+    }
+
+    let mut buf = final_payload_bytes;
+    let mp_value = read_value(&mut buf).map_err(|e| {
+        Error::ApiResponse(serde_json::json!({
+            "error": "MsgPack decode error (rmpv)",
+            "details": e.to_string()
+        }))
+    })?;
+
+    Ok(Response {
+        ver,
+        cmd,
+        seq,
+        opcode,
+        payload: msgpack_to_json(mp_value),
+    })
+}
+
+pub(crate) fn decode_binary_frame(data: &[u8]) -> ClientResult<Response> {
+    if data.len() < 10 {
+        return Err(Error::ConnectionFailed(format!(
+            "Binary frame too short: {} bytes",
+            data.len()
+        )));
+    }
+    let ver = data[0];
+    let cmd = data[1];
+    let seq = u16::from_be_bytes([data[2], data[3]]) as u64;
+    let opcode = u16::from_be_bytes([data[4], data[5]]);
+    let packed_len_raw = u32::from_be_bytes([data[6], data[7], data[8], data[9]]);
+    let comp_flag = packed_len_raw >> 24;
+    let payload_len = (packed_len_raw & 0xFFFFFF) as usize;
+
+    if data.len() < 10 + payload_len {
+        return Err(Error::ConnectionFailed(format!(
+            "Truncated binary frame: expected {} payload bytes, got {}",
+            payload_len,
+            data.len() - 10
+        )));
+    }
+
+    decode_binary_payload(ver, cmd, seq, opcode, comp_flag, &data[10..10 + payload_len])
+}
+
 #[async_trait]
 impl TransportWriter for MobileWriter {
     async fn send(&mut self, request: Request) -> ClientResult<()> {
-        let mp_payload = json_to_msgpack(&request.payload);
-
-        let mut payload_bytes = Vec::new();
-            rmpv::encode::write_value(&mut payload_bytes, &mp_payload)
-            .map_err(|e| Error::SendFailed(format!("MsgPack encode error: {}", e)))?;
-
-        let payload_len = payload_bytes.len();
-        if payload_len > 0xFFFFFF {
-            return Err(Error::SendFailed("Payload too large".into()));
-        }
-
-        let mut buffer = BytesMut::with_capacity(10 + payload_len);
-        buffer.put_u8(request.ver as u8);
-        buffer.put_u8(request.cmd as u8);
-        buffer.put_u16(request.seq as u16);
-        buffer.put_u16(request.opcode);
-        
-        let packed_len = (payload_len as u32) & 0xFFFFFF; 
-        buffer.put_u32(packed_len);
-        buffer.put_slice(&payload_bytes);
+        let buffer = encode_binary_frame(&request)?;
 
         self.writer.write_all(&buffer).await
             .map_err(|e| Error::SendFailed(e.to_string()))?;
@@ -316,7 +402,7 @@ impl TransportReader for MobileReader {
         };
 
         let ver = header[0];
-        let cmd = header[1] as u16;
+        let cmd = header[1];
         let seq = u16::from_be_bytes([header[2], header[3]]) as u64;
         let opcode = u16::from_be_bytes([header[4], header[5]]);
         let packed_len_raw = u32::from_be_bytes([header[6], header[7], header[8], header[9]]);
@@ -326,44 +412,18 @@ impl TransportReader for MobileReader {
 
         if payload_len == 0 {
             return Ok(Some(Response {
-                ver: ver, cmd: cmd as u8, seq, opcode, payload: JsonValue::Null,
+                ver,
+                cmd,
+                seq,
+                opcode,
+                payload: JsonValue::Null,
             }));
         }
         
         let mut payload_buf = vec![0u8; payload_len];
         self.reader.read_exact(&mut payload_buf).await
             .map_err(|e| Error::ConnectionFailed(format!("Payload read err: {}", e)))?;
-        
-        let final_payload_bytes = if comp_flag != 0 {
-            let max_size = 5 * 1024 * 1024; 
-            lz4_flex::block::decompress(&payload_buf, max_size)
-                .map_err(|e| Error::ApiResponse(serde_json::json!({"error": "LZ4 error", "details": e.to_string()})))?
-        } else {
-            payload_buf
-        };
-        
-        if final_payload_bytes.is_empty() {
-             return Ok(Some(Response {
-                ver: ver, cmd: cmd as u8, seq, opcode, payload: JsonValue::Null,
-            }));
-        }
-        
-        let mut buf = &final_payload_bytes[..];
-        
-        let mp_value = read_value(&mut buf)
-            .map_err(|e| Error::ApiResponse(serde_json::json!({
-                "error": "MsgPack decode error (rmpv)", 
-                "details": e.to_string()
-            })))?;
-        
-        let payload_value = msgpack_to_json(mp_value);
-        
-        Ok(Some(Response {
-            ver: ver,
-            cmd: cmd as u8,
-            seq,
-            opcode,
-            payload: payload_value,
-        }))
+
+        decode_binary_payload(ver, cmd, seq, opcode, comp_flag, &payload_buf).map(Some)
     }
 }

@@ -46,16 +46,31 @@ pub struct Login2Flags {
 pub struct QrLoginSession {
     pub qr_link: String,
     pub track_id: String,
-    #[serde(default = "default_qr_polling_interval")]
+    #[serde(default = "default_qr_polling_interval", deserialize_with = "deserialize_null_polling_interval")]
     pub polling_interval: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub ttl: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub expires_at: i64,
 }
 
 fn default_qr_polling_interval() -> u64 {
     5000
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn deserialize_null_polling_interval<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u64>::deserialize(deserializer)?.unwrap_or_else(default_qr_polling_interval))
 }
 
 impl MaxClient {
@@ -112,7 +127,7 @@ impl MaxClient {
                 state.identity.clone(),
                 state.calls_seed,
                 state.version_provider.clone(),
-                state.writer.is_some(),
+                state.writer_tx.is_some() && !state.is_closed,
             )
         };
 
@@ -171,25 +186,7 @@ impl MaxClient {
         let resp = self.send_and_wait(18, payload, 0).await?;
         
         log::debug!("check_code response {:?}", resp);
-        
-        if let Some(token_attrs) = resp.payload.get("tokenAttrs").and_then(|t| t.as_object()) {
-            for (token_type, value) in token_attrs {
-                if let Some(token) = value.get("token").and_then(|t| t.as_str()) {
-                    match token_type.as_str() {
-                        "REGISTER" => {
-                            self.set_temp_token(token.to_string()).await;
-                        }
-                        "LOGIN" => {
-                            self.set_token(token.to_string()).await;
-                        }
-                        _ => {
-                            eprintln!("Unknown token type: {}", token_type);
-                        }
-                    }
-                }
-            }
-        }
-        
+        self.update_tokens_from_payload(&resp.payload).await;
         Ok(resp)
     }
 
@@ -202,22 +199,7 @@ impl MaxClient {
         let resp = self.send_and_wait(115, payload, 0).await?;
 
         log::debug!("check_password response {:?}", resp);
-
-        if let Some(token_attrs) = resp.payload.get("tokenAttrs").and_then(|t| t.as_object()) {
-            for (token_type, value) in token_attrs {
-                if let Some(token) = value.get("token").and_then(|t| t.as_str()) {
-                    match token_type.as_str() {
-                        "LOGIN" => {
-                            self.set_token(token.to_string()).await;
-                        }
-                        _ => {
-                            eprintln!("Unknown token type in check_password: {}", token_type);
-                        }
-                    }
-                }
-            }
-        }
-
+        self.update_tokens_from_payload(&resp.payload).await;
         Ok(resp)
     }
 
@@ -469,12 +451,9 @@ impl MaxClient {
                 session.expires_at
             }
         } else if session.ttl > 0 {
-            let ttl_ms = if session.ttl < 100_000 {
-                session.ttl * 1000
-            } else {
-                session.ttl
-            };
-            now_ms + ttl_ms
+            now_ms
+                .checked_add(session.ttl)
+                .ok_or_else(|| Error::Other("QR session ttl overflow".to_string()))?
         } else {
             now_ms + 120_000
         };
@@ -487,13 +466,27 @@ impl MaxClient {
         );
 
         loop {
-            if Utc::now().timestamp_millis() >= deadline_ms {
+            let remaining_ms = deadline_ms - Utc::now().timestamp_millis();
+            if remaining_ms <= 0 {
                 warn!("QR: timed out after {}ms without confirmation", total_wait);
                 return Err(Error::RequestTimeout(Duration::from_millis(total_wait)));
             }
 
             attempt += 1;
-            match self.qr_login_poll(&session.track_id).await {
+            let poll_res = match tokio::time::timeout(
+                Duration::from_millis(remaining_ms as u64),
+                self.qr_login_poll(&session.track_id),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => {
+                    warn!("QR: timed out after {}ms without confirmation", total_wait);
+                    return Err(Error::RequestTimeout(Duration::from_millis(total_wait)));
+                }
+            };
+
+            match poll_res {
                 Ok(resp) => {
                     debug!(
                         "QR poll #{}: cmd={} opcode={}",
@@ -567,7 +560,7 @@ impl MaxClient {
                 "QR: 2FA password required; call check_password with challenge trackId: {:?}",
                 challenge.get("trackId")
             );
-            return Err(Error::ApiResponse(resp.payload));
+            return Err(Error::PasswordRequired(resp.payload));
         }
 
         warn!("QR: no login token in LOGIN_BY_QR response");
