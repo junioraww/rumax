@@ -42,6 +42,22 @@ impl MaxClient {
         self.send_and_wait(34, payload, 0).await
     }
     
+    /// Updates the name of an existing contact.
+    pub async fn update_contact_name(
+        &self,
+        user_id: u64,
+        first_name: &str,
+        last_name: Option<&str>,
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "contactId": user_id,
+            "firstName": first_name,
+            "lastName": last_name,
+            "action": "UPDATE",
+        });
+        self.send_and_wait(34, payload, 0).await
+    }
+
     pub async fn delete_contact(
         &self,
         user_id: u64
@@ -114,3 +130,43 @@ impl MaxClient {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{errors::Error, WriteCommand};
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn updating_contact_name_sends_update_action_and_both_name_fields() {
+        let client = MaxClient::new();
+        let (writer, mut commands) = mpsc::channel::<WriteCommand>(1);
+        {
+            let mut state = client.state.lock().await;
+            state.is_closed = false;
+            state.writer_tx = Some(writer);
+        }
+
+        for last_name in [Some("Example"), None] {
+            let (result, request) = tokio::join!(
+                client.update_contact_name(42, "Alex", last_name),
+                async {
+                    let command = commands.recv().await.unwrap();
+                    command.done.send(Err(Error::NotConnected)).unwrap();
+                    command.request
+                },
+            );
+            assert!(matches!(result, Err(Error::NotConnected)));
+            assert_eq!(request.opcode, 34);
+            assert_eq!(
+                request.payload,
+                json!({
+                    "contactId": 42,
+                    "firstName": "Alex",
+                    "lastName": last_name,
+                    "action": "UPDATE",
+                })
+            );
+        }
+    }
+}
