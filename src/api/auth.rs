@@ -7,13 +7,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 
+fn default_sync_ts() -> i64 {
+    -1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncState {
+    #[serde(default = "default_sync_ts")]
     pub chats_sync: i64,
+    #[serde(default = "default_sync_ts")]
     pub contacts_sync: i64,
-    pub drafts_sync: i64,
+    #[serde(default = "default_sync_ts")]
     pub presence_sync: i64,
+    #[serde(default = "default_sync_ts")]
+    pub calls_sync: i64,
+    #[serde(default = "default_sync_ts")]
+    pub last_login: i64,
+    #[serde(default = "default_sync_ts")]
+    pub banners_sync: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_hash: Option<serde_json::Value>,
 }
@@ -23,8 +35,10 @@ impl Default for SyncState {
         Self {
             chats_sync: -1,
             contacts_sync: -1,
-            drafts_sync: -1,
             presence_sync: -1,
+            calls_sync: -1,
+            last_login: -1,
+            banners_sync: -1,
             config_hash: None,
         }
     }
@@ -295,8 +309,6 @@ impl MaxClient {
         &self,
         sync_state: Option<SyncState>,
     ) -> ClientResult<(Response, Option<Response>, SyncState)> {
-        const DEFAULT_CONFIG_HASH: &str = "00000000-0000000000000000-00000000-0000000000000000-0000000000000000-0-0000000000000000-00000000";
-
         let mut sync_state = sync_state.unwrap_or_default();
 
         let (token, identity, calls_seed, version_provider) = {
@@ -321,30 +333,47 @@ impl MaxClient {
                 "chatsSync": sync_state.chats_sync,
                 "contactsSync": sync_state.contacts_sync,
                 "presenceSync": -1,
-                "draftsSync": sync_state.drafts_sync,
             })
         } else {
             let mut p = json!({
-                "userAgent": identity.user_agent,
                 "interactive": true,
                 "token": token,
-                "chatsSync": sync_state.chats_sync,
-                "contactsSync": sync_state.contacts_sync,
                 "presenceSync": -1,
-                "draftsSync": sync_state.drafts_sync,
                 "exp": {
                     "chatsCountGroups": vec![0x0a, 0x32]
                 }
             });
+
+            if sync_state.chats_sync > 0 {
+                p["chatsSync"] = json!(sync_state.chats_sync);
+            }
+            if sync_state.contacts_sync > 0 {
+                p["contactsSync"] = json!(sync_state.contacts_sync);
+            }
+            if sync_state.calls_sync > 0 {
+                p["callsSync"] = json!(sync_state.calls_sync);
+            }
+            if sync_state.last_login > 0 {
+                p["lastLogin"] = json!(sync_state.last_login);
+            }
+            if sync_state.banners_sync > 0 {
+                p["bannersSync"] = json!(sync_state.banners_sync);
+            }
 
             if let Some(fp) = chat_cache_fingerprint {
                 p["chatCacheFingerprint"] = json!(fp);
             }
 
             if let Some(hash) = &sync_state.config_hash {
-                p["configHash"] = hash.clone();
-            } else {
-                p["configHash"] = json!(DEFAULT_CONFIG_HASH);
+                if hash.as_str().map_or(true, |s| !s.is_empty()) {
+                    p["configHash"] = hash.clone();
+                }
+            }
+
+            if let Some(a_id) = &identity.a_id {
+                if !a_id.is_empty() {
+                    p["aId"] = json!(a_id);
+                }
             }
 
             p
@@ -361,7 +390,9 @@ impl MaxClient {
         if let Some(time) = login_response.payload.get("time").and_then(|t| t.as_i64()) {
             sync_state.chats_sync = time;
             sync_state.contacts_sync = time;
-            sync_state.drafts_sync = time;
+            sync_state.calls_sync = time;
+            sync_state.last_login = time;
+            sync_state.banners_sync = time;
             sync_state.presence_sync = -1;
         }
 
@@ -379,11 +410,15 @@ impl MaxClient {
                     serde_json::from_value(flags_val.clone()).unwrap_or_default();
 
                 if flags.config_enabled || flags.contact_enabled || flags.profile_enabled {
-                    let login2_payload = json!({
+                    let mut login2_payload = json!({
                         "needProfile": flags.profile_enabled,
                         "contactsSync": if flags.contact_enabled { sync_state.contacts_sync } else { -1 },
-                        "configHash": sync_state.config_hash,
                     });
+                    if let Some(hash) = &sync_state.config_hash {
+                        if hash.as_str().map_or(true, |s| !s.is_empty()) {
+                            login2_payload["configHash"] = hash.clone();
+                        }
+                    }
 
                     match self.send_and_wait(8, login2_payload, 0).await {
                         Ok(login2_response) => {
@@ -655,5 +690,56 @@ mod tests {
     async fn sync_propagates_disconnect_during_login2() {
         let client = mobile_client(true).await;
         assert!(matches!(client.sync(None).await, Err(Error::ConnectionClosed(_))));
+    }
+
+    #[test]
+    fn sync_state_deserializes_legacy_json_without_new_fields() {
+        let legacy: SyncState = serde_json::from_value(json!({
+            "chatsSync": 100,
+            "contactsSync": 200,
+            "draftsSync": 300,
+            "presenceSync": -1,
+        }))
+        .unwrap();
+        assert_eq!(legacy.chats_sync, 100);
+        assert_eq!(legacy.contacts_sync, 200);
+        assert_eq!(legacy.presence_sync, -1);
+        assert_eq!(legacy.calls_sync, -1);
+        assert_eq!(legacy.last_login, -1);
+        assert_eq!(legacy.banners_sync, -1);
+        assert!(legacy.config_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn sync_matches_mobile_login_payload_fields() {
+        let client = mobile_client(false).await;
+        let mut events = client.subscribe();
+
+        let (_, _, state) = client.sync(None).await.unwrap();
+        let first_login = events.try_recv().unwrap();
+        let first_payload = &first_login["request"]["payload"];
+        assert!(first_payload.get("userAgent").is_none());
+        assert!(first_payload.get("chatsSync").is_none());
+        assert!(first_payload.get("contactsSync").is_none());
+        assert!(first_payload.get("callsSync").is_none());
+        assert!(first_payload.get("lastLogin").is_none());
+        assert!(first_payload.get("bannersSync").is_none());
+        assert!(first_payload.get("configHash").is_none());
+        assert_eq!(first_payload["presenceSync"], -1);
+        assert_eq!(state.calls_sync, 42);
+        assert_eq!(state.last_login, 42);
+        assert_eq!(state.banners_sync, 42);
+
+        let _ = events.try_recv().unwrap(); // LOGIN2
+
+        client.sync(Some(state)).await.unwrap();
+        let second_login = events.try_recv().unwrap();
+        let second_payload = &second_login["request"]["payload"];
+        assert_eq!(second_payload["chatsSync"], 42);
+        assert_eq!(second_payload["contactsSync"], 42);
+        assert_eq!(second_payload["callsSync"], 42);
+        assert_eq!(second_payload["lastLogin"], 42);
+        assert_eq!(second_payload["bannersSync"], 42);
+        assert_eq!(second_payload["presenceSync"], -1);
     }
 }
