@@ -1,8 +1,9 @@
 use rumax::MaxClient;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-async fn upload_headers(filename: &str) -> String {
+async fn upload_headers(filename: &str) -> HashMap<String, String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/upload", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
@@ -33,24 +34,40 @@ async fn upload_headers(filename: &str) -> String {
 
     assert_eq!(uploaded.unwrap(), serde_json::json!({"fileId": 42}));
     let request = String::from_utf8(server.await.unwrap()).unwrap();
-    request.split("\r\n\r\n").next().unwrap().to_ascii_lowercase()
+    request
+        .split_once("\r\n\r\n")
+        .unwrap()
+        .0
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let (name, value) = line.split_once(':').unwrap();
+            (name.to_ascii_lowercase(), value.trim_start().to_owned())
+        })
+        .collect()
 }
 
 #[tokio::test]
 async fn upload_encodes_unicode_filename_in_request_headers() {
     let headers = upload_headers("тест файл.txt").await;
-    let name = "%d1%82%d0%b5%d1%81%d1%82%20%d1%84%d0%b0%d0%b9%d0%bb.txt";
-    assert!(headers.contains(&format!("content-disposition: attachment; filename=\"{name}\"")));
-    assert!(headers.contains(&format!("x-file-name: {name}")));
-    assert!(headers.contains("content-type: application/octet-stream"));
-    assert!(headers.contains("content-range: bytes 0-5/6"));
+    let name = "%D1%82%D0%B5%D1%81%D1%82%20%D1%84%D0%B0%D0%B9%D0%BB.txt";
+    assert_eq!(
+        headers["content-disposition"],
+        format!("attachment; filename=\"{name}\"")
+    );
+    assert_eq!(headers["x-file-name"], name);
+    assert_eq!(headers["content-type"], "application/octet-stream");
+    assert_eq!(headers["content-range"], "bytes 0-5/6");
 }
 
 #[tokio::test]
 async fn upload_keeps_ascii_names_and_the_empty_name_fallback() {
-    for (filename, expected) in [("report Q1.txt", "report q1.txt"), ("", "file")] {
+    for (filename, expected) in [("report Q1.txt", "report Q1.txt"), ("", "file")] {
         let headers = upload_headers(filename).await;
-        assert!(headers.contains(&format!("content-disposition: attachment; filename=\"{expected}\"")));
-        assert!(headers.contains("content-range: bytes 0-5/6"));
+        assert_eq!(
+            headers["content-disposition"],
+            format!("attachment; filename=\"{expected}\"")
+        );
+        assert_eq!(headers["content-range"], "bytes 0-5/6");
     }
 }
