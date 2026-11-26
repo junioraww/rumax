@@ -262,23 +262,18 @@ impl MaxClient {
             sanitized_name
         };
 
-        let encoded_filename =
-            (!safe_filename.is_ascii()).then(|| encode_upload_filename(&safe_filename));
-        let filename = encoded_filename.as_deref().unwrap_or(&safe_filename);
-        let request = client
+        let encoded_filename = encode_upload_filename(&safe_filename);
+        let response = match client
             .post(upload_url)
             .timeout(Duration::from_secs(600))
             .header("Content-Type", "application/octet-stream")
-            .header("Content-Disposition", format!("attachment; filename=\"{filename}\""))
+            .header("Content-Disposition", format!("attachment; filename=\"{encoded_filename}\""))
             .header("Content-Length", file_size.to_string())
             .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
-            .body(body);
-        let request = match encoded_filename {
-            Some(name) => request.header("X-File-Name", name),
-            None => request,
-        };
-
-        let response = match request.send().await {
+            .body(body)
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(e) => return json!({ "error": format!("Upload failed: {}", e) }),
         };

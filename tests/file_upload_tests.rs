@@ -55,19 +55,20 @@ async fn upload_encodes_unicode_filename_in_request_headers() {
         headers["content-disposition"],
         format!("attachment; filename=\"{name}\"")
     );
-    assert_eq!(headers["x-file-name"], name);
+    assert!(!headers.contains_key("x-file-name"));
     assert_eq!(headers["content-type"], "application/octet-stream");
     assert_eq!(headers["content-range"], "bytes 0-5/6");
 }
 
 #[tokio::test]
-async fn upload_keeps_ascii_names_and_the_empty_name_fallback() {
-    for (filename, expected) in [("report Q1.txt", "report Q1.txt"), ("", "file")] {
+async fn upload_encodes_ascii_spaces_and_keeps_empty_name_fallback() {
+    for (filename, expected) in [("report Q1.txt", "report%20Q1.txt"), ("", "file")] {
         let headers = upload_headers(filename).await;
         assert_eq!(
             headers["content-disposition"],
             format!("attachment; filename=\"{expected}\"")
         );
+        assert!(!headers.contains_key("x-file-name"));
         assert_eq!(headers["content-range"], "bytes 0-5/6");
     }
 }

@@ -59,12 +59,14 @@ impl MaxClient {
         first_name: &str,
         last_name: Option<&str>,
     ) -> ClientResult<Response> {
-        let payload = json!({
+        let mut payload = json!({
             "contactId": user_id,
             "firstName": first_name,
-            "lastName": last_name,
             "action": "UPDATE",
         });
+        if let Some(last) = last_name.filter(|s| !s.is_empty()) {
+            payload["lastName"] = json!(last);
+        }
         self.send_and_wait(34, payload, 0).await
     }
 
@@ -168,7 +170,33 @@ mod tests {
             state.writer_tx = Some(writer);
         }
 
-        for last_name in [Some("Example"), None] {
+        for (last_name, expected) in [
+            (
+                Some("Example"),
+                json!({
+                    "contactId": 42,
+                    "firstName": "Alex",
+                    "lastName": "Example",
+                    "action": "UPDATE",
+                }),
+            ),
+            (
+                None,
+                json!({
+                    "contactId": 42,
+                    "firstName": "Alex",
+                    "action": "UPDATE",
+                }),
+            ),
+            (
+                Some(""),
+                json!({
+                    "contactId": 42,
+                    "firstName": "Alex",
+                    "action": "UPDATE",
+                }),
+            ),
+        ] {
             let (result, request) = tokio::join!(
                 client.update_contact_name(42, "Alex", last_name),
                 async {
@@ -179,15 +207,7 @@ mod tests {
             );
             assert!(matches!(result, Err(Error::NotConnected)));
             assert_eq!(request.opcode, 34);
-            assert_eq!(
-                request.payload,
-                json!({
-                    "contactId": 42,
-                    "firstName": "Alex",
-                    "lastName": last_name,
-                    "action": "UPDATE",
-                })
-            );
+            assert_eq!(request.payload, expected);
         }
     }
 }
