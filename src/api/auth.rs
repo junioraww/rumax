@@ -320,7 +320,7 @@ impl MaxClient {
                 "interactive": true,
                 "chatsSync": sync_state.chats_sync,
                 "contactsSync": sync_state.contacts_sync,
-                "presenceSync": sync_state.presence_sync,
+                "presenceSync": -1,
                 "draftsSync": sync_state.drafts_sync,
             })
         } else {
@@ -330,7 +330,7 @@ impl MaxClient {
                 "token": token,
                 "chatsSync": sync_state.chats_sync,
                 "contactsSync": sync_state.contacts_sync,
-                "presenceSync": sync_state.presence_sync,
+                "presenceSync": -1,
                 "draftsSync": sync_state.drafts_sync,
                 "exp": {
                     "chatsCountGroups": vec![0x0a, 0x32]
@@ -362,7 +362,7 @@ impl MaxClient {
             sync_state.chats_sync = time;
             sync_state.contacts_sync = time;
             sync_state.drafts_sync = time;
-            sync_state.presence_sync = time;
+            sync_state.presence_sync = -1;
         }
 
         if let Some(config) = login_response.payload.get("config") {
