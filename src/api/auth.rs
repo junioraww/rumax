@@ -385,15 +385,18 @@ impl MaxClient {
                         "configHash": sync_state.config_hash,
                     });
 
-                    let login2_response = self.send_and_wait(8, login2_payload, 0).await?;
-
-                    if let Some(config) = login2_response.payload.get("config") {
-                        if let Some(hash) = config.get("hash") {
-                            sync_state.config_hash = Some(hash.clone());
+                    match self.send_and_wait(8, login2_payload, 0).await {
+                        Ok(login2_response) => {
+                            if let Some(hash) = login2_response.payload.pointer("/config/hash") {
+                                sync_state.config_hash = Some(hash.clone());
+                            }
+                            login2_response_opt = Some(login2_response);
                         }
+                        Err(error @ Error::ApiResponse(_)) => {
+                            warn!("LOGIN2 rejected after successful LOGIN: {}", error.kind());
+                        }
+                        Err(error) => return Err(error),
                     }
-
-                    login2_response_opt = Some(login2_response);
                 }
             }
         }
@@ -574,5 +577,83 @@ impl MaxClient {
         let _token = self.qr_login_wait(session).await?;
         let (login, _login2, state) = self.sync(None).await?;
         Ok((login, state))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::WriteCommand;
+    use tokio::sync::mpsc;
+
+    async fn mobile_client(close_on_login2: bool) -> MaxClient {
+        let client = MaxClient::new();
+        let (writer, mut commands) = mpsc::channel::<WriteCommand>(1);
+        let pending = {
+            let mut state = client.state.lock().await;
+            state.token = Some("test".to_owned());
+            state.identity = Some(serde_json::from_value(json!({
+                "deviceId": "0123456789abcdef0123456789abcdef",
+                "mtInstance": "test",
+                "userAgent": {
+                    "deviceType": "ANDROID",
+                    "appVersion": "26.42.0",
+                    "osVersion": "test",
+                    "timezone": "UTC",
+                    "screen": "",
+                    "locale": "en",
+                    "buildNumber": 0,
+                    "deviceName": "test",
+                    "deviceLocale": "en",
+                },
+            })).unwrap());
+            state.calls_seed = Some(1);
+            state.is_closed = false;
+            state.writer_tx = Some(writer);
+            state.pending.clone()
+        };
+
+        tokio::spawn(async move {
+            while let Some(command) = commands.recv().await {
+                let request = command.request;
+                let payload = match request.opcode {
+                    19 => json!({"time": 42, "login2Flags": {"profileEnabled": true}}),
+                    8 if close_on_login2 => {
+                        command.done.send(Err(Error::ConnectionClosed("test disconnect".into()))).unwrap();
+                        continue;
+                    }
+                    8 => json!({"error": "profile unavailable"}),
+                    opcode => panic!("unexpected request opcode {opcode}"),
+                };
+                command.done.send(Ok(())).unwrap();
+                pending.lock().unwrap().remove(&request.seq).unwrap().send(Ok(Response {
+                    ver: request.ver,
+                    cmd: request.cmd,
+                    seq: request.seq,
+                    opcode: request.opcode,
+                    payload,
+                })).unwrap();
+            }
+        });
+        client
+    }
+
+    #[tokio::test]
+    async fn sync_returns_successful_login_when_login2_is_rejected() {
+        let client = mobile_client(false).await;
+        let mut events = client.subscribe();
+        let (login, login2, state) = client.sync(None).await.unwrap();
+
+        assert_eq!(events.try_recv().unwrap()["request"]["opcode"], 19);
+        assert_eq!(events.try_recv().unwrap()["request"]["opcode"], 8);
+        assert_eq!(login.opcode, 19);
+        assert_eq!(state.chats_sync, 42);
+        assert!(login2.is_none());
+    }
+
+    #[tokio::test]
+    async fn sync_propagates_disconnect_during_login2() {
+        let client = mobile_client(true).await;
+        assert!(matches!(client.sync(None).await, Err(Error::ConnectionClosed(_))));
     }
 }

@@ -1,6 +1,7 @@
 use crate::{errors::ClientResult, MaxClient};
 use crate::models::Response;
 use serde_json::{json, Value};
+use std::fmt::Write as _;
 use tokio::{fs::File};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
@@ -261,17 +262,23 @@ impl MaxClient {
             sanitized_name
         };
 
-        let response = match client
+        let encoded_filename =
+            (!safe_filename.is_ascii()).then(|| encode_upload_filename(&safe_filename));
+        let filename = encoded_filename.as_deref().unwrap_or(&safe_filename);
+        let request = client
             .post(upload_url)
             .timeout(Duration::from_secs(600))
             .header("Content-Type", "application/octet-stream")
-            .header("Content-Disposition", format!("attachment; filename=\"{}\"", safe_filename))
+            .header("Content-Disposition", format!("attachment; filename=\"{filename}\""))
             .header("Content-Length", file_size.to_string())
             .header("Content-Range", format!("bytes 0-{}/{}", file_size.saturating_sub(1), file_size))
-            .body(body)
-            .send()
-            .await
-        {
+            .body(body);
+        let request = match encoded_filename {
+            Some(name) => request.header("X-File-Name", name),
+            None => request,
+        };
+
+        let response = match request.send().await {
             Ok(r) => r,
             Err(e) => return json!({ "error": format!("Upload failed: {}", e) }),
         };
@@ -286,4 +293,16 @@ impl MaxClient {
             "fileId": file_id
         })
     }
+}
+
+fn encode_upload_filename(filename: &str) -> String {
+    let mut encoded = String::with_capacity(filename.len());
+    for byte in filename.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            write!(encoded, "%{byte:02X}").expect("writing to a String cannot fail");
+        }
+    }
+    encoded
 }
