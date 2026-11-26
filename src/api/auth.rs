@@ -393,7 +393,7 @@ impl MaxClient {
                             login2_response_opt = Some(login2_response);
                         }
                         Err(error @ Error::ApiResponse(_)) => {
-                            warn!("LOGIN2 rejected after successful LOGIN: {}", error.kind());
+                            warn!("LOGIN2 rejected after successful LOGIN: {error}");
                         }
                         Err(error) => return Err(error),
                     }
