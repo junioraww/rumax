@@ -28,6 +28,16 @@ impl MaxClient {
         });
         self.send_and_wait(32, payload, 0).await
     }
+
+    pub async fn fetch_presence(
+        &self,
+        user_ids: Vec<u64>
+    ) -> ClientResult<Response> {
+        let payload = json!({
+            "contactIds": user_ids
+        });
+        self.send_and_wait(35, payload, 0).await
+    }
     
     pub async fn add_contact(
         &self,
