@@ -100,6 +100,8 @@ pub struct Response {
 pub struct Identity {
     pub device_id: String,
     pub mt_instance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a_id: Option<String>,
     pub user_agent: UserAgent,
 }
 
@@ -108,6 +110,7 @@ impl Identity {
         Self {
             device_id: random_device_id(),
             mt_instance: random_uuid_v4(),
+            a_id: Some(random_uuid_v4()),
             user_agent: UserAgent::generate_mobile(),
         }
     }
@@ -116,6 +119,7 @@ impl Identity {
         Self {
             device_id: random_uuid_v4(),
             mt_instance: random_uuid_v4(),
+            a_id: None,
             user_agent: UserAgent::generate_web(),
         }
     }
@@ -124,6 +128,7 @@ impl Identity {
         Self {
             device_id: random_device_id(),
             mt_instance: random_uuid_v4(),
+            a_id: Some(random_uuid_v4()),
             user_agent: UserAgent::default_mobile(),
         }
     }
@@ -132,6 +137,7 @@ impl Identity {
         Self {
             device_id: random_uuid_v4(),
             mt_instance: random_uuid_v4(),
+            a_id: None,
             user_agent: UserAgent::default_web(),
         }
     }
