@@ -380,6 +380,7 @@ impl MaxClient {
         };
 
         let login_response = self.send_and_wait(19, payload, 0).await?;
+        self.state.lock().await.is_synced = true;
 
         if let Some(new_token) = login_response.payload.get("token").and_then(|t| t.as_str()) {
             if new_token != token {

@@ -202,6 +202,7 @@ struct ClientState {
     #[allow(dead_code)]
     current_screen: String,
     is_closed: bool,
+    is_synced: bool,
     mobile_port: u16,
     mobile_host: String,
     use_custom_ca: bool,
@@ -235,7 +236,7 @@ pub struct MaxClient {
 impl MaxClient {
     pub fn new() -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        let (event_tx, _) = broadcast::channel(20);
+        let (event_tx, _) = broadcast::channel(64);
         MaxClient {
             state: Arc::new(TokioMutex::new(ClientState {
                 writer_tx: None,
@@ -251,6 +252,7 @@ impl MaxClient {
                 identity: None,
                 current_screen: "chats_list_tab".to_string(),
                 is_closed: true,
+                is_synced: false,
                 mobile_host: Constants::MOBILE_HOST.to_string(),
                 mobile_port: Constants::MOBILE_PORT,
                 use_custom_ca: true,
@@ -358,6 +360,15 @@ impl MaxClient {
 
     pub async fn get_user_id(&self) -> Option<u64> {
         self.state.lock().await.user_id
+    }
+
+    pub async fn is_synced(&self) -> bool {
+        self.state.lock().await.is_synced
+    }
+
+    pub async fn get_identity(&self) -> Option<(Identity, bool)> {
+        let s = self.state.lock().await;
+        s.identity.clone().map(|id| (id, s.is_mobile))
     }
 
     /// Sends an immediate PING with a short timeout to verify the socket is alive.
@@ -588,6 +599,7 @@ impl MaxClient {
             state_lock.http_client_generation = state_lock.http_client_generation.wrapping_add(1);
             state_lock.seq = 0;
             state_lock.is_closed = false;
+            state_lock.is_synced = false;
             state_lock.is_vpn = None;
             state_lock.calls_seed = None;
             state_lock.generation = generation;
@@ -710,6 +722,7 @@ impl MaxClient {
     pub async fn disconnect(&self) {
         let mut state = self.state.lock().await;
         state.is_closed = true;
+        state.is_synced = false;
         state.generation = next_generation();
         state.is_vpn = None;
         state.calls_seed = None;
@@ -744,6 +757,7 @@ impl MaxClient {
         if s.generation == generation && !s.is_closed {
             s.writer_tx = None;
             s.is_closed = true;
+            s.is_synced = false;
             s.is_vpn = None;
             if let Some(shutdown) = s.shutdown_tx.take() {
                 let _ = shutdown.send(());
