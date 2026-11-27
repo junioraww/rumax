@@ -383,6 +383,8 @@ impl TransportWriter for MobileWriter {
 
         self.writer.write_all(&buffer).await
             .map_err(|e| Error::SendFailed(e.to_string()))?;
+        self.writer.flush().await
+            .map_err(|e| Error::SendFailed(e.to_string()))?;
         Ok(())
     }
 }

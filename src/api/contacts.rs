@@ -140,7 +140,6 @@ impl MaxClient {
         self.send_and_wait(34, payload, 0).await
     }
 
-    /// Syncs a batch of phonebook entries with the server (opcode 21).
     pub async fn upload_phonebook_contacts(
         &self,
         contact_list: std::collections::HashMap<String, serde_json::Value>,
