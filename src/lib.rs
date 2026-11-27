@@ -991,6 +991,49 @@ impl MaxClient {
         }
     }
     
+    fn build_push_ack(resp: &Response) -> Option<Request> {
+        if resp.cmd != 0 {
+            return None;
+        }
+        let payload = match resp.opcode {
+            1 => json!({}),
+            128 => {
+                let chat_id = resp.payload.get("chatId")?;
+                let msg = resp.payload.get("message")?;
+                let msg_id = msg.get("id")?;
+                let mut map = serde_json::Map::new();
+                map.insert("chatId".to_string(), chat_id.clone());
+                map.insert("messageId".to_string(), msg_id.clone());
+                if let Some(post_id) = resp.payload.get("postId").filter(|v| v.as_i64().unwrap_or(0) != 0) {
+                    map.insert("postId".to_string(), post_id.clone());
+                }
+                if msg.get("type").and_then(|v| v.as_str()) == Some("GROUP")
+                    || resp.payload.pointer("/chat/type").and_then(|v| v.as_str()) == Some("CHAT")
+                    || chat_id.as_i64().map(|id| id < 0).unwrap_or(false)
+                {
+                    map.insert("chatType".to_string(), json!("GROUP_CHAT"));
+                }
+                Value::Object(map)
+            }
+            137 => {
+                let conv_id = resp.payload.get("conversationId")?;
+                let caller_id = resp.payload.get("callerId")?;
+                json!({
+                    "conversationId": conv_id,
+                    "callerId": caller_id,
+                })
+            }
+            _ => return None,
+        };
+        Some(Request {
+            ver: resp.ver,
+            cmd: 1,
+            seq: resp.seq,
+            opcode: resp.opcode,
+            payload,
+        })
+    }
+
     async fn read_task(
         mut reader: Box<dyn TransportReader>,
         pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ClientResult<Response>>>>>,
@@ -1019,6 +1062,24 @@ impl MaxClient {
                             } else {
                                 let state_guard = state.lock().await;
                                 if state_guard.generation == generation && state_guard.writer_tx.is_some() {
+                                    if let (Some(tx), Some(ack_req)) = (state_guard.writer_tx.clone(), Self::build_push_ack(&resp)) {
+                                        let (done_tx, done_rx) = oneshot::channel();
+                                        let cmd = WriteCommand {
+                                            request: ack_req,
+                                            generation,
+                                            done: done_tx,
+                                        };
+                                        match tx.try_send(cmd) {
+                                            Ok(()) => {
+                                                tokio::spawn(async move {
+                                                    let _ = done_rx.await;
+                                                });
+                                            }
+                                            Err(e) => {
+                                                warn!("Не удалось поставить ACK (opcode={}) в очередь записи: {}", resp.opcode, e);
+                                            }
+                                        }
+                                    }
                                     let _ = event_sender.send(json!({
                                         "type": "rx",
                                         "response": resp
