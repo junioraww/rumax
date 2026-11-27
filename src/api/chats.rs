@@ -38,6 +38,23 @@ impl MaxClient {
         self.send_and_wait(68, Value::Object(payload), 0).await
     }
 
+    pub async fn search_chat_messages(
+        &self,
+        chat_id: i64,
+        query: String,
+        count: i32,
+        marker: Option<i64>,
+    ) -> ClientResult<Response> {
+        let mut payload = Map::new();
+        payload.insert("chatId".into(), json!(chat_id));
+        payload.insert("query".into(), json!(query));
+        payload.insert("count".into(), json!(count));
+        if let Some(m) = marker {
+            payload.insert("marker".into(), json!(m));
+        }
+        self.send_and_wait(73, Value::Object(payload), 0).await
+    }
+
     pub async fn get_chats(
         &self,
         chat_ids: Vec<i64>
