@@ -15,10 +15,14 @@ use tokio::{
     time::timeout,
 };
 use yawc::{CompressionLevel, HttpRequestBuilder, Options, WebSocket};
-use rustls::crypto::ring;
+use rustls::crypto::aws_lc_rs;
 use url::Url;
 use rustls_pki_types::ServerName;
 use tokio_rustls::TlsConnector;
+
+pub fn ensure_tls_provider() {
+    let _ = aws_lc_rs::default_provider().install_default();
+}
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 static GLOBAL_PROXY_VERSION: AtomicU64 = AtomicU64::new(1);
@@ -481,7 +485,7 @@ impl MaxClient {
     }
     
     pub async fn connect(&self, identity: Identity, is_mobile: bool) -> ClientResult<Response> {
-        let _ = ring::default_provider().install_default();
+        ensure_tls_provider();
 
         let is_web_identity = identity.user_agent.device_type.eq_ignore_ascii_case("web");
         if !is_mobile && !is_web_identity {
